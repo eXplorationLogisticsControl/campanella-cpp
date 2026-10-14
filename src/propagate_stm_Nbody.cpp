@@ -9,14 +9,10 @@ Two-body equations of motion
 #include <cmath>
 #include <gsl/gsl_errno.h>
 #include <gsl/gsl_odeiv2.h>
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>       // enable automatic conversion between C++ STL types and Python types
 #include "SpiceUsr.h"
 
 #include "params.h"
 #include "eoms_stm.h"
-
-namespace py = pybind11;
 
 
 /**
