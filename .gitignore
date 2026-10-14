@@ -57,6 +57,7 @@ dkms.conf
 # Build directory
 *.egg-info/
 build/
+build-*/
 out/
 
 # third-party libraries
