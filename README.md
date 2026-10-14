@@ -17,7 +17,7 @@ cmake --build build --config Release
 
 The Python module is written to `build/lib` (on Windows, `build/Release`). Its name follows the Python CMake found, for example `campanella.cpython-311-darwin.so` for Python 3.11 on macOS. Import it by adding that directory to `PYTHONPATH`.
 
-4. Run tests through python. `SPICE` must point at a directory of generic SPICE kernels (`lsk/naif0012.tls` and `spk/de440.bsp`).
+4. Run tests through python. `SPICE` must point at a directory of generic SPICE kernels (`lsk/naif0012.tls` and `spk/de440.bsp`). Load them with `campanella.furnsh(path)`. `spiceypy.furnsh` does not: that package links a separate CSPICE.
 
 ```bash
 uv run python tests/test_import.py
@@ -69,7 +69,7 @@ error messages to output, and where to send the output.  Please read the ERROR
 ==============================================================================
 ```
 
-even though you've furnished the appropriate kernels with `spice.furnsh()`: make sure to install `spiceypy` via `conda install` instead of `pip install`!
+Load the kernels with `campanella.furnsh(path)`. `spiceypy.furnsh()` loads a different CSPICE and does not affect this library. A missing kernel raises `RuntimeError` from `furnsh` instead of exiting the process.
 
 
 ## Todo
