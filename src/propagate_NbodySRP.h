@@ -1,7 +1,8 @@
 #ifndef NBODYSRP_H
 #define NBODYSRP_H
 
-#include <iostream>
+#include <string>
+#include <tuple>
 #include <vector>
 
 std::vector<std::tuple<double, double, double, double, double, double, double>> propagate_NbodySRP(

@@ -1,5 +1,6 @@
-# Campanella
-campanella is a c++ library for astrodynamics with python binding from SSOG
+# `campanella`: a c++ library for high-fidelity ephemeris model dynamics with python binding
+
+[![CI](https://github.com/eXplorationLogisticsControl/campanella-cpp/actions/workflows/ci.yml/badge.svg)](https://github.com/eXplorationLogisticsControl/campanella-cpp/actions/workflows/ci.yml)
 
 ## Directory structure
 
@@ -8,6 +9,12 @@ campanella is a c++ library for astrodynamics with python binding from SSOG
 ├── docs
 │   ├── basic_usage_python.md
 │   └── build_library.md
+├── examples
+│   ├── solve_Nbody.cpp               # N-body propagation; needs SPICE kernels
+│   ├── solve_NbodySTM.cpp            # N-body state and state-transition matrix
+│   └── solve_twobody.cpp             # two-body propagation
+├── include
+│   └── campanella.hpp                # public C++ header
 ├── notes
 │   ├── list_cmakelists.md
 │   ├── setup_linux.md
@@ -28,39 +35,65 @@ campanella is a c++ library for astrodynamics with python binding from SSOG
 
 ## Installation
 
-1. Install CMake and a C++ compiler.
+Install CMake and a C++ compiler. Clone this repository, then `cd` to the repository's root.
 
-2. Clone this repository, then `cd` to the repository's root.
+Configure downloads the host CSPICE package into `third_party/cspice` when `lib/cspice.a` is absent, and fetches GSL into the build directory. The Python build also fetches pybind11. Pass `-DCAMPANELLA_BUILD_CPP=ON` with the Python option left on to build both into one directory. Configure stops if both options are off.
 
-3. Configure and build. Configure downloads the host CSPICE package into `third_party/cspice` when `lib/cspice.a` is absent, and fetches GSL and pybind11 into the build directory.
+### Build for cpp
 
 ```bash
-rm -rf build third_party
+rm -rf build-cpp
+cmake -B build-cpp -S . -DCAMPANELLA_BUILD_PYTHON=OFF -DCAMPANELLA_BUILD_CPP=ON
+cmake --build build-cpp
+```
+
+This writes `build-cpp/lib/libcampanella.dylib` on macOS, or `libcampanella.so` on Linux. Include `include/campanella.hpp` and link that library. GSL and CSPICE are already inside it, so do not also link CSPICE or spiceypy into the same process. The examples `solve_twobody`, `solve_Nbody`, and `solve_NbodySTM` are built in `build-cpp/bin` and find the library through its rpath. `solve_Nbody` and `solve_NbodySTM` load `lsk/naif0012.tls` and `spk/de440.bsp` from the directory in `SPICE`.
+
+```bash
+c++ -std=c++17 my_ivp.cpp \
+  -I include -I src \
+  -L build-cpp/lib -lcampanella \
+  -Wl,-rpath,build-cpp/lib
+```
+
+Another CMake project can add this repository as a subdirectory:
+
+```cmake
+set(CAMPANELLA_BUILD_PYTHON OFF CACHE BOOL "")
+set(CAMPANELLA_BUILD_CPP ON CACHE BOOL "")
+add_subdirectory(path/to/campanella-cpp)
+target_link_libraries(my_app PRIVATE campanella)
+```
+
+### Build for python
+
+```bash
+rm -rf build
 cmake -B build -S .
 cmake --build build --config Release
 ```
 
 The Python module is written to `build/lib` (on Windows, `build/Release`). Its name follows the Python CMake found, for example `campanella.cpython-311-darwin.so` for Python 3.11 on macOS. Import it by adding that directory to `PYTHONPATH`.
 
-4. Run tests through python. `SPICE` must point at a directory of generic SPICE kernels (`lsk/naif0012.tls` and `spk/de440.bsp`). Load them with `campanella.furnsh(path)`. `spiceypy.furnsh` does not: that package links a separate CSPICE.
+`SPICE` must point at a directory of generic SPICE kernels (`lsk/naif0012.tls` and `spk/de440.bsp`). Load them with `campanella.furnsh(path)`. `spiceypy.furnsh` does not: that package links a separate CSPICE.
 
 ```bash
 uv sync
 uv run pytest
 ```
 
+To build for a specific interpreter:
+
+```bash
+rm -rf build
+cmake -B build -S . -DPython_EXECUTABLE=$(which python3.11)
+cmake --build build --config Release
+```
+
 For further details see:
 
 - building the library: [docs/build_library.md](docs/build_library.md)
 - using the library via python: [docs/basic_usage_python.md](docs/basic_usage_python.md)
-
-Specifying python version at build: 
-
-```bash
-rm -rf build third_party
-cmake -B build -S . -DPython_EXECUTABLE=$(which python3.11)
-cmake --build build --config Release
-```
 
 
 ## Common Issues

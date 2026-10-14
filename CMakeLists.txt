@@ -7,12 +7,19 @@ project(campanella LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
+option(CAMPANELLA_BUILD_PYTHON "Build the pybind11 module" ON)
+option(CAMPANELLA_BUILD_CPP "Build the shared C++ library" OFF)
+if(NOT CAMPANELLA_BUILD_PYTHON AND NOT CAMPANELLA_BUILD_CPP)
+    message(FATAL_ERROR
+        "Nothing to build. Pass -DCAMPANELLA_BUILD_PYTHON=ON and/or -DCAMPANELLA_BUILD_CPP=ON.")
+endif()
+
 # Find Python interpreter and development libraries first.
 # `uv run` uses .venv. On macOS, CMake otherwise prefers a Python.framework
 # (Homebrew 3.13 here) and writes campanella.cpython-313-*.so, which 3.11
 # will not import. Prefer the venv's base interpreter, which has the headers
 # uv's pyvenv.cfg does not expose to FindPython.
-if(NOT Python_EXECUTABLE)
+if(CAMPANELLA_BUILD_PYTHON AND NOT Python_EXECUTABLE)
     if(WIN32)
         set(_campanella_venv_python "${CMAKE_SOURCE_DIR}/.venv/Scripts/python.exe")
     else()
@@ -41,15 +48,21 @@ if(NOT Python_EXECUTABLE)
         endif()
     endif()
 endif()
-find_package(Python COMPONENTS Interpreter Development REQUIRED)
-message(STATUS "Found Python ${Python_VERSION}")
+if(CAMPANELLA_BUILD_PYTHON)
+    find_package(Python COMPONENTS Interpreter Development REQUIRED)
+    message(STATUS "Found Python ${Python_VERSION}")
 
-# Set Python version variables for pybind11
-set(PYBIND11_PYTHON_VERSION "${Python_VERSION_MAJOR}.${Python_VERSION_MINOR}")
-set(bindings_python_version ${PYBIND11_PYTHON_VERSION}) # Keep original variable name if used elsewhere
+    # Set Python version variables for pybind11
+    set(PYBIND11_PYTHON_VERSION "${Python_VERSION_MAJOR}.${Python_VERSION_MINOR}")
+    set(bindings_python_version ${PYBIND11_PYTHON_VERSION}) # Keep original variable name if used elsewhere
+endif()
 
-# Dependencies: GSL and pybind11, fetched at configure/build time
-message(STATUS "Using FetchContent for GSL and pybind11")
+# Dependencies: GSL, and pybind11 when the Python module is enabled
+if(CAMPANELLA_BUILD_PYTHON)
+    message(STATUS "Using FetchContent for GSL and pybind11")
+else()
+    message(STATUS "Using FetchContent for GSL")
+endif()
 
 # --- Fetch and Build GNU GSL ---
 include(ExternalProject)
@@ -142,16 +155,18 @@ set(GSL_TARGET GSL::gsl)
 set(GSL_CBLAS_TARGET GSL::gslcblas)
 
 # --- Fetch pybind11 ---
-FetchContent_Declare(
-    pybind11
-    GIT_REPOSITORY https://github.com/pybind/pybind11.git
-    GIT_TAG v2.11.1 # Specify desired tag/commit
-)
-FetchContent_MakeAvailable(pybind11)
-# pybind11::module uses -undefined dynamic_lookup on macOS. Linking Python::Python
-# as well loads a second libpython into a statically linked interpreter and
-# crashes in take_gil on import.
-set(PYBIND11_TARGET pybind11::module)
+if(CAMPANELLA_BUILD_PYTHON)
+    FetchContent_Declare(
+        pybind11
+        GIT_REPOSITORY https://github.com/pybind/pybind11.git
+        GIT_TAG v2.11.1 # Specify desired tag/commit
+    )
+    FetchContent_MakeAvailable(pybind11)
+    # pybind11::module uses -undefined dynamic_lookup on macOS. Linking Python::Python
+    # as well loads a second libpython into a statically linked interpreter and
+    # crashes in take_gil on import.
+    set(PYBIND11_TARGET pybind11::module)
+endif()
 
 # --- CSPICE: official NAIF prebuilt archive for this host, into third_party/cspice ---
 # Same selection as chebyshev-ephemeris:
@@ -234,9 +249,9 @@ set_target_properties(cspice PROPERTIES
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
-# make library
-add_library(${PROJECT_NAME} MODULE
-    src/campanella.cpp
+# Solver sources, compiled once and linked into whichever product is enabled.
+add_library(campanella_core OBJECT
+    src/spice_kernels.cpp
     src/propagate_twobody.cpp
     src/propagate_Nbody.cpp
     src/propagate_NbodySRP.cpp
@@ -246,14 +261,69 @@ add_library(${PROJECT_NAME} MODULE
     src/gravity_gradient_Nbody.cpp
     src/perturbations.cpp
     src/SRP.cpp)
-
-pybind11_extension(${PROJECT_NAME} PYTHON_VERSION ${bindings_python_version})
-
-add_dependencies(${PROJECT_NAME} gsl_external_build)
-
-target_link_libraries(${PROJECT_NAME} PRIVATE
+set_target_properties(campanella_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(campanella_core PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(campanella_core PUBLIC
     ${GSL_TARGET}
     ${GSL_CBLAS_TARGET}
-    cspice
-    ${PYBIND11_TARGET}
-)
+    cspice)
+add_dependencies(campanella_core gsl_external_build)
+
+if(CAMPANELLA_BUILD_CPP)
+    # $<TARGET_OBJECTS> keeps this working when cmake_minimum_required is 3.12.
+    # Do not also link campanella_core: that would add the same objects twice.
+    add_library(campanella SHARED $<TARGET_OBJECTS:campanella_core>)
+    target_include_directories(campanella PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(campanella PRIVATE
+        ${GSL_TARGET}
+        ${GSL_CBLAS_TARGET}
+        cspice)
+    add_dependencies(campanella gsl_external_build)
+    set_target_properties(campanella PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+    # NAIF's prebuilt cspice.a may contain text relocations. -z notext lets the
+    # shared library link on Linux without rebuilding CSPICE. --exclude-libs
+    # keeps those CSPICE symbols inside libcampanella.
+    if(UNIX AND NOT APPLE)
+        set_property(TARGET campanella APPEND_STRING PROPERTY
+            LINK_FLAGS " -Wl,-z,notext -Wl,--exclude-libs,ALL")
+    endif()
+
+    add_executable(solve_twobody examples/solve_twobody.cpp)
+    target_link_libraries(solve_twobody PRIVATE campanella)
+    set_target_properties(solve_twobody PROPERTIES
+        BUILD_RPATH "$<TARGET_FILE_DIR:campanella>")
+
+    add_executable(solve_Nbody examples/solve_Nbody.cpp)
+    target_link_libraries(solve_Nbody PRIVATE campanella)
+    set_target_properties(solve_Nbody PROPERTIES
+        BUILD_RPATH "$<TARGET_FILE_DIR:campanella>")
+
+    add_executable(solve_NbodySTM examples/solve_NbodySTM.cpp)
+    target_link_libraries(solve_NbodySTM PRIVATE campanella)
+    set_target_properties(solve_NbodySTM PROPERTIES
+        BUILD_RPATH "$<TARGET_FILE_DIR:campanella>")
+endif()
+
+if(CAMPANELLA_BUILD_PYTHON)
+    add_library(campanella_python MODULE
+        src/campanella.cpp
+        $<TARGET_OBJECTS:campanella_core>)
+    set_target_properties(campanella_python PROPERTIES OUTPUT_NAME campanella)
+    pybind11_extension(campanella_python)
+    add_dependencies(campanella_python gsl_external_build)
+    target_include_directories(campanella_python PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(campanella_python PRIVATE
+        ${GSL_TARGET}
+        ${GSL_CBLAS_TARGET}
+        cspice
+        ${PYBIND11_TARGET}
+    )
+endif()
