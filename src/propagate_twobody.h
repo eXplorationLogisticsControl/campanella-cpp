@@ -1,6 +1,7 @@
 #ifndef TWOBODY_H
 #define TWOBODY_H
 
+#include <tuple>
 #include <vector>
 
 std::vector<std::tuple<double, double, double, double, double, double, double>> propagate_twobody(

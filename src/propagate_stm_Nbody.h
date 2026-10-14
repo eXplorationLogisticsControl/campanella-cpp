@@ -1,6 +1,8 @@
 #ifndef STM_NBODY_H
 #define STM_NBODY_H
 
+#include <string>
+#include <tuple>
 #include <vector>
 
 std::vector<std::tuple<double,

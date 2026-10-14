@@ -1,6 +1,8 @@
 #ifndef NBODY_H
 #define NBODY_H
 
+#include <string>
+#include <tuple>
 #include <vector>
 
 std::vector<std::tuple<double, double, double, double, double, double, double>> propagate_Nbody(
