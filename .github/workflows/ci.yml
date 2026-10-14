@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download SPICE kernels
+        # Tests expect $SPICE/lsk/naif0012.tls and $SPICE/spk/de440.bsp.
+        run: |
+          mkdir -p kernels/lsk kernels/spk
+          curl -fL -o kernels/lsk/naif0012.tls \
+            https://naif.jpl.nasa.gov/pub/naif/generic_kernels/lsk/naif0012.tls
+          curl -fL -o kernels/spk/de440.bsp \
+            https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de440.bsp
+
+      - name: Build the C++ library and examples
+        run: |
+          cmake -B build-cpp -S . -DCAMPANELLA_BUILD_PYTHON=OFF -DCAMPANELLA_BUILD_CPP=ON
+          cmake --build build-cpp --parallel
+
+      - name: Run C++ examples
+        env:
+          SPICE: ${{ github.workspace }}/kernels
+        run: |
+          ./build-cpp/bin/solve_twobody
+          ./build-cpp/bin/solve_Nbody
+          ./build-cpp/bin/solve_NbodySTM
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python test dependencies
+        # Create .venv before configure so CMake builds the extension for this interpreter.
+        run: uv sync
+
+      - name: Build the Python module
+        run: |
+          cmake -B build -S . -DCAMPANELLA_BUILD_PYTHON=ON -DCAMPANELLA_BUILD_CPP=OFF
+          cmake --build build --parallel
+
+      - name: Run pytest
+        env:
+          SPICE: ${{ github.workspace }}/kernels
+          MPLBACKEND: Agg
+        run: uv run pytest
