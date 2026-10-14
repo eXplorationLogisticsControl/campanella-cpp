@@ -8,6 +8,10 @@ campanella is a c++ library for astrodynamics with python binding from SSOG
 ├── docs
 │   ├── basic_usage_python.md
 │   └── build_library.md
+├── examples
+│   └── solve_twobody.cpp             # links the shared C++ library
+├── include
+│   └── campanella.hpp                # public C++ header
 ├── notes
 │   ├── list_cmakelists.md
 │   ├── setup_linux.md
@@ -41,6 +45,35 @@ cmake --build build --config Release
 ```
 
 The Python module is written to `build/lib` (on Windows, `build/Release`). Its name follows the Python CMake found, for example `campanella.cpython-311-darwin.so` for Python 3.11 on macOS. Import it by adding that directory to `PYTHONPATH`.
+
+That configure builds the Python module (`-DCAMPANELLA_BUILD_PYTHON=ON`, the default) and skips the shared C++ library (`-DCAMPANELLA_BUILD_CPP=OFF`, the default).
+
+To build the shared library instead, skip Python and pybind11:
+
+```bash
+cmake -B build-cpp -S . -DCAMPANELLA_BUILD_PYTHON=OFF -DCAMPANELLA_BUILD_CPP=ON
+cmake --build build-cpp
+```
+
+This writes `build-cpp/lib/libcampanella.dylib` on macOS, or `libcampanella.so` on Linux. Include `include/campanella.hpp` and link that library. GSL and CSPICE are already inside it, so do not also link CSPICE or spiceypy into the same process. The example `solve_twobody` is built in `build-cpp/bin` and finds the library through its rpath.
+
+```bash
+c++ -std=c++17 my_ivp.cpp \
+  -I include -I src \
+  -L build-cpp/lib -lcampanella \
+  -Wl,-rpath,build-cpp/lib
+```
+
+Another CMake project can add this repository as a subdirectory:
+
+```cmake
+set(CAMPANELLA_BUILD_PYTHON OFF CACHE BOOL "")
+set(CAMPANELLA_BUILD_CPP ON CACHE BOOL "")
+add_subdirectory(path/to/campanella-cpp)
+target_link_libraries(my_app PRIVATE campanella)
+```
+
+Pass `-DCAMPANELLA_BUILD_CPP=ON` with the Python option left on to build both into the same directory. Configure stops if both options are off.
 
 4. Run tests through python. `SPICE` must point at a directory of generic SPICE kernels (`lsk/naif0012.tls` and `spk/de440.bsp`). Load them with `campanella.furnsh(path)`. `spiceypy.furnsh` does not: that package links a separate CSPICE.
 
