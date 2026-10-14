@@ -1,5 +1,6 @@
-# Campanella
-campanella is a c++ library for astrodynamics with python binding from SSOG
+# `campanella`: a c++ library for high-fidelity ephemeris model dynamics with python binding
+
+[![CI](https://github.com/eXplorationLogisticsControl/campanella-cpp/actions/workflows/ci.yml/badge.svg)](https://github.com/eXplorationLogisticsControl/campanella-cpp/actions/workflows/ci.yml)
 
 ## Directory structure
 
