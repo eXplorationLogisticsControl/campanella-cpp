@@ -43,7 +43,7 @@ def test_propagate_NbodySRP():
     print(f"np.array(traj).shape: \n{np.array(traj).shape}")
 
     print("Initializing N-body propagator...")
-    propN = campanella.PropagatorNBodySRP(
+    propN = campanella.PropagatorNbodySrp(
         GM = GM_list,
         BODIES = ["MOON", "EARTH", "SUN"],
         frame = "J2000",

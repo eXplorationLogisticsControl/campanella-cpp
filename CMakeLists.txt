@@ -251,16 +251,16 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 # Solver sources, compiled once and linked into whichever product is enabled.
 add_library(campanella_core OBJECT
-    src/spice_kernels.cpp
-    src/propagate_twobody.cpp
-    src/propagate_Nbody.cpp
-    src/propagate_NbodySRP.cpp
-    src/propagate_stm_Nbody.cpp
-    src/eoms.cpp
-    src/eoms_stm.cpp
-    src/gravity_gradient_Nbody.cpp
-    src/perturbations.cpp
-    src/SRP.cpp)
+    src/perturbations/spice_kernels.cpp
+    src/propagate/propagate_twobody.cpp
+    src/propagate/propagate_Nbody.cpp
+    src/propagate/propagate_NbodySRP.cpp
+    src/propagate/propagate_stm_Nbody.cpp
+    src/eoms/eoms.cpp
+    src/eoms/eoms_stm.cpp
+    src/eoms/gravity_gradient_Nbody.cpp
+    src/perturbations/perturbations.cpp
+    src/perturbations/SRP.cpp)
 set_target_properties(campanella_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(campanella_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include"

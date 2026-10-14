@@ -28,7 +28,7 @@ Two-body equations of motion
  * @param abstol absolute error tolerance, defaults to 1e-12
  * @return vector of tuples containing state history
  */
-std::vector<std::tuple<double, double, double, double, double, double, double>> propagate_Nbody(
+std::vector<std::tuple<double, double, double, double, double, double, double>> solve_ivp_nbody(
     double et0,
     const std::vector<double>& tspan,
     const std::vector<double>& state0,

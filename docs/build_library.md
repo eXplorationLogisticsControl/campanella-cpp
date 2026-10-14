@@ -51,7 +51,7 @@ cmake -B build-cpp -S . -DCAMPANELLA_BUILD_PYTHON=OFF -DCAMPANELLA_BUILD_CPP=ON
 cmake --build build-cpp
 ```
 
-Programs include `include/campanella.hpp`. The shared library already contains GSL and CSPICE; do not also link CSPICE or spiceypy into that process. `build-cpp/bin/solve_twobody` links the library and runs a two-body propagation. `build-cpp/bin/solve_Nbody` propagates the same initial state with `PropagatorNBody`, and `build-cpp/bin/solve_NbodySTM` also propagates the state-transition matrix. Both load `lsk/naif0012.tls` and `spk/de440.bsp` from the directory in `SPICE`. A one-file program links the build tree directly:
+Programs include `include/campanella.hpp`. The shared library already contains GSL and CSPICE; do not also link CSPICE or spiceypy into that process. `build-cpp/bin/solve_twobody` links the library and runs a two-body propagation. `build-cpp/bin/solve_Nbody` propagates the same initial state with `PropagatorNbody`, and `build-cpp/bin/solve_NbodySTM` also propagates the state-transition matrix. Both load `lsk/naif0012.tls` and `spk/de440.bsp` from the directory in `SPICE`. A one-file program links the build tree directly:
 
 ```bash
 c++ -std=c++17 my_ivp.cpp \

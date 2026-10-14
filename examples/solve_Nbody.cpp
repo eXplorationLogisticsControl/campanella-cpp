@@ -55,7 +55,7 @@ int main() {
 
     // GM[i] belongs to BODIES[i]. BODIES[0] is the central body.
     // LU = TU = 1 keeps the integration in km and seconds.
-    campanella::PropagatorNBody prop(
+    campanella::PropagatorNbody prop(
         {GM, 398600.432896939, 132712197035.766},
         {"MOON", "EARTH", "SUN"},
         "J2000",

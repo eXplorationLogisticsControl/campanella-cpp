@@ -5,10 +5,10 @@
 #include <tuple>
 #include <vector>
 
-#include "propagate_twobody.h"
-#include "propagate_Nbody.h"
-#include "propagate_NbodySRP.h"
-#include "propagate_stm_Nbody.h"
+#include "propagate/propagate_twobody.h"
+#include "propagate/propagate_Nbody.h"
+#include "propagate/propagate_NbodySRP.h"
+#include "propagate/propagate_stm_Nbody.h"
 
 namespace campanella {
 
@@ -38,7 +38,7 @@ struct PropagatorTwoBody {
     std::vector<std::tuple<double, double, double, double, double, double, double>> solve_ivp(
         const std::vector<double>& tspan,
         const std::vector<double>& y0) {
-        return ::propagate_twobody(tspan, y0, GM, reltol, abstol);
+        return ::solve_ivp_twobody(tspan, y0, GM, reltol, abstol);
     }
 };
 
@@ -53,7 +53,7 @@ struct PropagatorTwoBody {
  * @param reltol relative error tolerance, defaults to 1e-14
  * @param abstol absolute error tolerance, defaults to 1e-12
  */
-struct PropagatorNBody {
+struct PropagatorNbody {
     std::vector<double> GM;
     std::vector<std::string> BODIES;
     std::string frame;
@@ -62,7 +62,7 @@ struct PropagatorNBody {
     double reltol;
     double abstol;
 
-    PropagatorNBody(std::vector<double> GM,
+    PropagatorNbody(std::vector<double> GM,
                     std::vector<std::string> BODIES,
                     std::string frame,
                     double LU,
@@ -75,7 +75,7 @@ struct PropagatorNBody {
         double et0,
         const std::vector<double>& tspan,
         const std::vector<double>& y0) {
-        return ::propagate_Nbody(
+        return ::solve_ivp_nbody(
             et0, tspan, y0, GM, BODIES, frame, LU, TU, reltol, abstol);
     }
 
@@ -90,7 +90,7 @@ struct PropagatorNBody {
         double et0,
         const std::vector<double>& tspan,
         const std::vector<double>& y0) {
-        return ::propagate_stm_Nbody(
+        return ::solve_ivp_stm_nbody(
             et0, tspan, y0, GM, BODIES, frame, LU, TU, reltol, abstol);
     }
 };
@@ -110,7 +110,7 @@ struct PropagatorNBody {
  * @param reltol relative error tolerance, defaults to 1e-14
  * @param abstol absolute error tolerance, defaults to 1e-12
  */
-struct PropagatorNBodySRP {
+struct PropagatorNbodySrp {
     std::vector<double> GM;
     std::vector<std::string> BODIES;
     std::string frame;
@@ -123,7 +123,7 @@ struct PropagatorNBodySRP {
     double reltol;
     double abstol;
 
-    PropagatorNBodySRP(std::vector<double> GM,
+    PropagatorNbodySrp(std::vector<double> GM,
                        std::vector<std::string> BODIES,
                        std::string frame,
                        double A,
@@ -141,7 +141,7 @@ struct PropagatorNBodySRP {
         double et0,
         const std::vector<double>& tspan,
         const std::vector<double>& y0) {
-        return ::propagate_NbodySRP(
+        return ::solve_ivp_nbody_srp(
             et0, tspan, y0, GM, BODIES, frame, A, m, rhoS, rhoD, LU, TU, reltol, abstol);
     }
 };

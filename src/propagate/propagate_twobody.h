@@ -4,7 +4,7 @@
 #include <tuple>
 #include <vector>
 
-std::vector<std::tuple<double, double, double, double, double, double, double>> propagate_twobody(
+std::vector<std::tuple<double, double, double, double, double, double, double>> solve_ivp_twobody(
     const std::vector<double>& tspan,
     const std::vector<double>& state0,
     double GM,
