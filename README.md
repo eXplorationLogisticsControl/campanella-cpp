@@ -9,7 +9,9 @@ campanella is a c++ library for astrodynamics with python binding from SSOG
 │   ├── basic_usage_python.md
 │   └── build_library.md
 ├── examples
-│   └── solve_twobody.cpp             # links the shared C++ library
+│   ├── solve_Nbody.cpp               # N-body propagation; needs SPICE kernels
+│   ├── solve_NbodySTM.cpp            # N-body state and state-transition matrix
+│   └── solve_twobody.cpp             # two-body propagation
 ├── include
 │   └── campanella.hpp                # public C++ header
 ├── notes
@@ -55,7 +57,7 @@ cmake -B build-cpp -S . -DCAMPANELLA_BUILD_PYTHON=OFF -DCAMPANELLA_BUILD_CPP=ON
 cmake --build build-cpp
 ```
 
-This writes `build-cpp/lib/libcampanella.dylib` on macOS, or `libcampanella.so` on Linux. Include `include/campanella.hpp` and link that library. GSL and CSPICE are already inside it, so do not also link CSPICE or spiceypy into the same process. The example `solve_twobody` is built in `build-cpp/bin` and finds the library through its rpath.
+This writes `build-cpp/lib/libcampanella.dylib` on macOS, or `libcampanella.so` on Linux. Include `include/campanella.hpp` and link that library. GSL and CSPICE are already inside it, so do not also link CSPICE or spiceypy into the same process. The examples `solve_twobody`, `solve_Nbody`, and `solve_NbodySTM` are built in `build-cpp/bin` and find the library through its rpath. `solve_Nbody` and `solve_NbodySTM` load `lsk/naif0012.tls` and `spk/de440.bsp` from the directory in `SPICE`.
 
 ```bash
 c++ -std=c++17 my_ivp.cpp \

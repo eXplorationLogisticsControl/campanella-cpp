@@ -298,6 +298,16 @@ if(CAMPANELLA_BUILD_CPP)
     target_link_libraries(solve_twobody PRIVATE campanella)
     set_target_properties(solve_twobody PROPERTIES
         BUILD_RPATH "$<TARGET_FILE_DIR:campanella>")
+
+    add_executable(solve_Nbody examples/solve_Nbody.cpp)
+    target_link_libraries(solve_Nbody PRIVATE campanella)
+    set_target_properties(solve_Nbody PROPERTIES
+        BUILD_RPATH "$<TARGET_FILE_DIR:campanella>")
+
+    add_executable(solve_NbodySTM examples/solve_NbodySTM.cpp)
+    target_link_libraries(solve_NbodySTM PRIVATE campanella)
+    set_target_properties(solve_NbodySTM PROPERTIES
+        BUILD_RPATH "$<TARGET_FILE_DIR:campanella>")
 endif()
 
 if(CAMPANELLA_BUILD_PYTHON)
