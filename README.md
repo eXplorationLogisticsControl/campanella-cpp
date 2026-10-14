@@ -20,7 +20,8 @@ The Python module is written to `build/lib` (on Windows, `build/Release`). Its n
 4. Run tests through python. `SPICE` must point at a directory of generic SPICE kernels (`lsk/naif0012.tls` and `spk/de440.bsp`). Load them with `campanella.furnsh(path)`. `spiceypy.furnsh` does not: that package links a separate CSPICE.
 
 ```bash
-uv run python tests/test_import.py
+uv sync
+uv run pytest
 ```
 
 For further details see:
