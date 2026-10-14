@@ -13,10 +13,10 @@ campanella is a c++ library for astrodynamics with python binding from SSOG
 │   ├── setup_linux.md
 │   └── setup_windows.md
 ├── scripts
-│   └── fetch_cspice.sh               # TODO
-├── src                               # TODO
+│   └── fetch_cspice.sh               # manual CSPICE download
+├── src                               # C++ library and pybind11 bindings
 │   └── ...
-├── test-python                       # TODO
+├── test-python                       # pytest tests for the built module
 │   └── ...
 ├── .gitignore
 ├── CMakeLists.txt
