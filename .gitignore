@@ -55,6 +55,7 @@ dkms.conf
 *.dwo
 
 # Build directory
+*.egg-info/
 build/
 out/
 
@@ -66,3 +67,10 @@ third_party
 
 # OSX temp file
 .DS_Store
+
+# scripts during development
+dev_files/
+
+# python cache
+__pycache__/
+.ipynb_checkpoints/
