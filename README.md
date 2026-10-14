@@ -1,6 +1,31 @@
 # Campanella
 campanella is a c++ library for astrodynamics with python binding from SSOG
 
+## Directory structure
+
+```sh
+.
+├── docs
+│   ├── basic_usage_python.md
+│   └── build_library.md
+├── notes
+│   ├── list_cmakelists.md
+│   ├── setup_linux.md
+│   └── setup_windows.md
+├── scripts
+│   └── fetch_cspice.sh               # TODO
+├── src                               # TODO
+│   └── ...
+├── test-python                       # TODO
+│   └── ...
+├── .gitignore
+├── CMakeLists.txt
+├── LICENSE
+├── pyproject.toml
+├── README.md
+└── uv.lock
+```
+
 ## Installation
 
 1. Install CMake and a C++ compiler.
@@ -29,9 +54,7 @@ For further details see:
 - building the library: [docs/build_library.md](docs/build_library.md)
 - using the library via python: [docs/basic_usage_python.md](docs/basic_usage_python.md)
 
-## Quickstart
-
-To build for Python 3.11:
+Specifying python version at build: 
 
 ```bash
 rm -rf build third_party
