@@ -34,25 +34,14 @@ campanella is a c++ library for astrodynamics with python binding from SSOG
 
 ## Installation
 
-1. Install CMake and a C++ compiler.
+Install CMake and a C++ compiler. Clone this repository, then `cd` to the repository's root.
 
-2. Clone this repository, then `cd` to the repository's root.
+Configure downloads the host CSPICE package into `third_party/cspice` when `lib/cspice.a` is absent, and fetches GSL into the build directory. The Python build also fetches pybind11. Pass `-DCAMPANELLA_BUILD_CPP=ON` with the Python option left on to build both into one directory. Configure stops if both options are off.
 
-3. Configure and build. Configure downloads the host CSPICE package into `third_party/cspice` when `lib/cspice.a` is absent, and fetches GSL and pybind11 into the build directory.
-
-```bash
-rm -rf build third_party
-cmake -B build -S .
-cmake --build build --config Release
-```
-
-The Python module is written to `build/lib` (on Windows, `build/Release`). Its name follows the Python CMake found, for example `campanella.cpython-311-darwin.so` for Python 3.11 on macOS. Import it by adding that directory to `PYTHONPATH`.
-
-That configure builds the Python module (`-DCAMPANELLA_BUILD_PYTHON=ON`, the default) and skips the shared C++ library (`-DCAMPANELLA_BUILD_CPP=OFF`, the default).
-
-To build the shared library instead, skip Python and pybind11:
+### Build for cpp
 
 ```bash
+rm -rf build-cpp
 cmake -B build-cpp -S . -DCAMPANELLA_BUILD_PYTHON=OFF -DCAMPANELLA_BUILD_CPP=ON
 cmake --build build-cpp
 ```
@@ -75,27 +64,35 @@ add_subdirectory(path/to/campanella-cpp)
 target_link_libraries(my_app PRIVATE campanella)
 ```
 
-Pass `-DCAMPANELLA_BUILD_CPP=ON` with the Python option left on to build both into the same directory. Configure stops if both options are off.
+### Build for python
 
-4. Run tests through python. `SPICE` must point at a directory of generic SPICE kernels (`lsk/naif0012.tls` and `spk/de440.bsp`). Load them with `campanella.furnsh(path)`. `spiceypy.furnsh` does not: that package links a separate CSPICE.
+```bash
+rm -rf build
+cmake -B build -S .
+cmake --build build --config Release
+```
+
+The Python module is written to `build/lib` (on Windows, `build/Release`). Its name follows the Python CMake found, for example `campanella.cpython-311-darwin.so` for Python 3.11 on macOS. Import it by adding that directory to `PYTHONPATH`.
+
+`SPICE` must point at a directory of generic SPICE kernels (`lsk/naif0012.tls` and `spk/de440.bsp`). Load them with `campanella.furnsh(path)`. `spiceypy.furnsh` does not: that package links a separate CSPICE.
 
 ```bash
 uv sync
 uv run pytest
 ```
 
+To build for a specific interpreter:
+
+```bash
+rm -rf build
+cmake -B build -S . -DPython_EXECUTABLE=$(which python3.11)
+cmake --build build --config Release
+```
+
 For further details see:
 
 - building the library: [docs/build_library.md](docs/build_library.md)
 - using the library via python: [docs/basic_usage_python.md](docs/basic_usage_python.md)
-
-Specifying python version at build: 
-
-```bash
-rm -rf build third_party
-cmake -B build -S . -DPython_EXECUTABLE=$(which python3.11)
-cmake --build build --config Release
-```
 
 
 ## Common Issues
