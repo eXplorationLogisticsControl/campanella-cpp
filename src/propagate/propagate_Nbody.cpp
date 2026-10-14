@@ -11,8 +11,8 @@ Two-body equations of motion
 #include <gsl/gsl_odeiv2.h>
 #include "SpiceUsr.h"
 
-#include "params.h"
-#include "eoms.h"
+#include "eoms/params.h"
+#include "eoms/eoms.h"
 
 /**
  * Propagate spacecraft state using N-body equations of motion

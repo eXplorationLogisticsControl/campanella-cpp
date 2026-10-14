@@ -10,8 +10,8 @@
 #include <SpiceUsr.h>          // access SPICE files
 #include "params.h"
 #include "eoms.h"
-#include "perturbations.h"
-#include "SRP.h"
+#include "perturbations/perturbations.h"
+#include "perturbations/SRP.h"
 
 
 /**

@@ -11,40 +11,22 @@ Two-body equations of motion
 #include <gsl/gsl_odeiv2.h>
 #include "SpiceUsr.h"
 
-#include "params.h"
-#include "eoms.h"
+#include "eoms/eoms.h"
 
 /**
- * Propagate spacecraft state using N-body equations of motion with SRP
+ * Propagate spacecraft state using two-body equations of motion
  *
- * @param et0 initial epoch, in ephemeris seconds past J2000 (regardless of TU)
  * @param tspan integration time span, [t0, tf]
  * @param state0 initial state, in order [x,y,z,vx,vy,vz]
- * @param GM list of gravitational parameters of each body
- * @param BODIES list of NAIF names of each body
- * @param A surface area of spacecraft
- * @param m mass of spacecraft
- * @param rhoS reflection rate of spacecraft
- * @param rhoD scattering rate of spacecraft
- * @param LU length unit
- * @param TU time unit
+ * @param GM gravitational parameter
  * @param reltol relative error tolerance, defaults to 1e-14
  * @param abstol absolute error tolerance, defaults to 1e-12
  * @return vector of tuples containing state history
  */
-std::vector<std::tuple<double, double, double, double, double, double, double>> propagate_NbodySRP(
-    double et0,
+std::vector<std::tuple<double, double, double, double, double, double, double>> propagate_twobody(
     const std::vector<double>& tspan,
     const std::vector<double>& state0,
-    std::vector<double> GM,
-    std::vector<std::string> BODIES,
-    std::string frame,
-    double A,
-    double m,
-    double rhoS,
-    double rhoD,
-    double LU,
-    double TU,
+    double GM,
     double reltol = 1e-14,
     double abstol = 1e-12){
     const int state_dim = 6;      // number of states
@@ -59,21 +41,7 @@ std::vector<std::tuple<double, double, double, double, double, double, double>> 
     gsl_odeiv2_control* control = gsl_odeiv2_control_y_new(abstol, reltol);
     gsl_odeiv2_evolve* evolve = gsl_odeiv2_evolve_alloc(state_dim);
 
-    // define input parameters for gsl_odeiv2_system 
-	ParamsNbody params;
-    params.et0 = et0;
-    params.GM = GM;
-    params.BODIES = BODIES;
-    params.frame = frame;
-    params.A = A;
-    params.m = m;
-    params.rhoS = rhoS;
-    params.rhoD = rhoD;
-    params.LU = LU;
-    params.TU = TU;
-
-    // define ODE
-    gsl_odeiv2_system sys = {eom_NBodySRP, nullptr, state_dim, &params};
+    gsl_odeiv2_system sys = {eom_twobody, nullptr, state_dim, &GM};
 
     double t = tspan[0];
     double t1 = tspan[1];

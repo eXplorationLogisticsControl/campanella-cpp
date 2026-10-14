@@ -11,8 +11,8 @@ Two-body equations of motion
 #include <gsl/gsl_odeiv2.h>
 #include "SpiceUsr.h"
 
-#include "params.h"
-#include "eoms_stm.h"
+#include "eoms/params.h"
+#include "eoms/eoms_stm.h"
 
 
 /**
