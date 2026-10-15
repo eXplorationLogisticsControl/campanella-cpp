@@ -66,7 +66,7 @@ def test_propagate_Nbody(make_plots = False):
     GM_list = [GM, 398600.432896939, 132712197035.766]
 
     # print("Initializing N-body propagator...")
-    propN = campanella.PropagatorNBody(
+    propN = campanella.PropagatorNbody(
         GM = GM_list,
         BODIES = ["MOON", "EARTH", "SUN"],
         frame = "J2000",
@@ -158,7 +158,7 @@ def test_propagate_Nbody_canonical(make_plots = False):
     GM_canonical = list(np.array(GM_list)/GM)
 
     print("Initializing N-body propagator (canonical)...")
-    propN = campanella.PropagatorNBody(
+    propN = campanella.PropagatorNbody(
         GM = GM_canonical,
         BODIES = BODIES,
         frame = "J2000",

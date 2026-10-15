@@ -69,7 +69,7 @@ PYBIND11_MODULE(campanella, m) {
                     (list): list of tuples each containing (time, x, y, z, vx, vy, vz)
              )mydelimiter");
 
-    py::class_<campanella::PropagatorNBody>(m, "PropagatorNBody")
+    py::class_<campanella::PropagatorNbody>(m, "PropagatorNbody")
         .def(py::init<std::vector<double>,
                       std::vector<std::string>,
                       std::string,
@@ -80,7 +80,7 @@ PYBIND11_MODULE(campanella, m) {
              py::arg("GM"), py::arg("BODIES"), py::arg("frame"), py::arg("LU"), py::arg("TU"),
              py::arg("reltol") = 1e-14, py::arg("abstol") = 1e-12,
              R"mydelimiter(
-                PropagatorNBody class
+                PropagatorNbody class
 
                 Propagates a spacecraft using N-body equations of motion
 
@@ -94,7 +94,7 @@ PYBIND11_MODULE(campanella, m) {
                     abstol (double): absolute error tolerance, defaults to 1e-12
             )mydelimiter")
 
-        .def("solve_ivp", &campanella::PropagatorNBody::solve_ivp,
+        .def("solve_ivp", &campanella::PropagatorNbody::solve_ivp,
              py::arg("et0"), py::arg("tspan"), py::arg("y0"),
              R"mydelimiter(
                 Propagate spacecraft state using N-body equations of motion
@@ -108,7 +108,7 @@ PYBIND11_MODULE(campanella, m) {
                     (list): list of tuples each containing (time, x, y, z, vx, vy, vz)
              )mydelimiter")
 
-        .def("solve_ivp_stm", &campanella::PropagatorNBody::solve_ivp_stm,
+        .def("solve_ivp_stm", &campanella::PropagatorNbody::solve_ivp_stm,
              py::arg("et0"), py::arg("tspan"), py::arg("y0"),
              R"mydelimiter(
                 Propagate spacecraft state using N-body equations of motion
@@ -122,7 +122,7 @@ PYBIND11_MODULE(campanella, m) {
                     (list): list of tuples each containing (time, x, y, z, vx, vy, vz) + list(STM(t,t0))
              )mydelimiter");
 
-    py::class_<campanella::PropagatorNBodySRP>(m, "PropagatorNBodySRP")
+    py::class_<campanella::PropagatorNbodySrp>(m, "PropagatorNbodySrp")
         .def(py::init<std::vector<double>,
                       std::vector<std::string>,
                       std::string,
@@ -138,7 +138,7 @@ PYBIND11_MODULE(campanella, m) {
              py::arg("A"), py::arg("m"), py::arg("rhoS"), py::arg("rhoD"),
              py::arg("LU"), py::arg("TU"), py::arg("reltol") = 1e-14, py::arg("abstol") = 1e-12,
              R"mydelimiter(
-                PropagatorNBodySRP class
+                PropagatorNbodySrp class
 
                 Propagates a spacecraft using N-body equations of motion
 
@@ -156,7 +156,7 @@ PYBIND11_MODULE(campanella, m) {
                     abstol (double): absolute error tolerance, defaults to 1e-12
             )mydelimiter")
 
-        .def("solve_ivp", &campanella::PropagatorNBodySRP::solve_ivp,
+        .def("solve_ivp", &campanella::PropagatorNbodySrp::solve_ivp,
              py::arg("et0"), py::arg("tspan"), py::arg("y0"),
              R"mydelimiter(
                 Propagate spacecraft state using N-body equations of motion

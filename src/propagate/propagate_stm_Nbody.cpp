@@ -11,8 +11,8 @@ Two-body equations of motion
 #include <gsl/gsl_odeiv2.h>
 #include "SpiceUsr.h"
 
-#include "params.h"
-#include "eoms_stm.h"
+#include "eoms/params.h"
+#include "eoms/eoms_stm.h"
 
 
 /**
@@ -36,7 +36,7 @@ std::vector<std::tuple<double,
                        double, double, double, double, double, double,
                        double, double, double, double, double, double,
                        double, double, double, double, double, double,
-                       double, double, double, double, double, double>> propagate_stm_Nbody(
+                       double, double, double, double, double, double>> solve_ivp_stm_nbody(
     double et0,
     const std::vector<double>& tspan,
     const std::vector<double>& state0,

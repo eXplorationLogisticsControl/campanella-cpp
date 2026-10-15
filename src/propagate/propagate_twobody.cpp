@@ -11,7 +11,7 @@ Two-body equations of motion
 #include <gsl/gsl_odeiv2.h>
 #include "SpiceUsr.h"
 
-#include "eoms.h"
+#include "eoms/eoms.h"
 
 /**
  * Propagate spacecraft state using two-body equations of motion
@@ -23,7 +23,7 @@ Two-body equations of motion
  * @param abstol absolute error tolerance, defaults to 1e-12
  * @return vector of tuples containing state history
  */
-std::vector<std::tuple<double, double, double, double, double, double, double>> propagate_twobody(
+std::vector<std::tuple<double, double, double, double, double, double, double>> solve_ivp_twobody(
     const std::vector<double>& tspan,
     const std::vector<double>& state0,
     double GM,
