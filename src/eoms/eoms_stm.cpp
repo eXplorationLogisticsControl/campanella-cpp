@@ -10,7 +10,7 @@
 #include <SpiceUsr.h>          // access SPICE files
 #include "params.h"
 #include "eoms.h"
-#include "perturbations/perturbations.h"
+#include "perturbations/thirdbody.h"
 #include "perturbations/SRP.h"
 
 #include "gravity_gradient_Nbody.h"		   // for jacobian 

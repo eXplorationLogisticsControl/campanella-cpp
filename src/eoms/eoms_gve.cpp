@@ -15,7 +15,7 @@
 #include "eoms_gve.h"
 #include "mee.h"
 #include "gravity_gradient_Nbody.h"
-#include "perturbations/perturbations.h"
+#include "perturbations/thirdbody.h"
 #include "perturbations/SRP.h"
 
 namespace {

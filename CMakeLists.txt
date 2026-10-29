@@ -263,7 +263,7 @@ add_library(campanella_core OBJECT
     src/eoms/eoms_gve.cpp
     src/eoms/mee.cpp
     src/eoms/gravity_gradient_Nbody.cpp
-    src/perturbations/perturbations.cpp
+    src/perturbations/thirdbody.cpp
     src/perturbations/SRP.cpp)
 set_target_properties(campanella_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(campanella_core PUBLIC
