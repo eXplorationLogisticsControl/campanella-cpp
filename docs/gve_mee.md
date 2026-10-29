@@ -340,8 +340,10 @@ F[2][3] = −(2/s²)( sL a_R + cL a_T )    F[2][4] = (2/s²)(  cL a_R − sL a_T
 ### 5.5 G: the inertial gradient of the perturbations
 
 ```
-G = Σ_{i=1}^{N−1} G_i  +  G_srp ,      G_rtn = Cᵀ G C
+G = Σ_{i=1}^{N−1} G_i  +  G_srp  +  G_sh ,      G_rtn = Cᵀ G C
 ```
+
+G_sh is present only when a central-body gravity field is given (see below).
 
 **Third body.** `compute_thirdbody_perturbation` evaluates Battin's form:
 - a_i = −μ_i (r + F(q_i) s_i)/‖d_i‖³, with d_i = r − s_i.
@@ -382,6 +384,16 @@ Notes:
 - `srp_gradient` (`src/perturbations/SRP.cpp`) takes s, forms d = r − s and R = ‖d‖, and recomputes κ with the same helper as `compute_SRP`.
 - There is no shadow model, which matches the Cartesian model.
 
+**Central-body spherical harmonics.** If a gravity field is given (`sh_file`, see [spherical_harmonics.md](spherical_harmonics.md)), `sh_perturbation` adds the acceleration of degrees 2..nmax to a_I. Its gradient is
+
+```
+G_sh = Tᵀ G_bf T ,      T = pxform(frame, frame_bf, et)
+```
+
+where G_bf is the body-fixed gradient from the V, W recursion.
+- The SH acceleration depends only on r and t, so nothing else in §5.6 changes.
+- Ṫ does not enter, because the Jacobian is taken at fixed t.
+
 ### 5.6 Algorithm for one RHS + STM evaluation
 
 1. Unpack x. Compute cL, sL, w, s², Z, w_L, Z_L, σ, n₀ and r.
@@ -395,6 +407,7 @@ Notes:
    - a_I += a_srp
    - G += G_srp
    - Recommendation: skip the SRP call entirely when S = 0. The result is bit-identical (κ = 0) and saves an `spkpos_c` call.
+   - Central-body spherical harmonics, if given: a_I += a_sh and G += G_sh.
 5. Compute a_rtn = [r̂·a_I, θ̂·a_I, n̂·a_I] and ẋ = b + B a_rtn.
 6. For the STM version only:
    - G_rtn = Cᵀ G C

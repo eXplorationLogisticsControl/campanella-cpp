@@ -10,7 +10,7 @@
 #include <SpiceUsr.h>          // access SPICE files
 #include "params.h"
 #include "eoms.h"
-#include "perturbations/perturbations.h"
+#include "perturbations/thirdbody.h"
 #include "perturbations/SRP.h"
 
 #include "gravity_gradient_Nbody.h"		   // for jacobian 
@@ -20,6 +20,10 @@
  */
 int eom_stm_NBody(double t, const double p[], double pdot[], void* params) {
     ParamsNbody* parameters = static_cast<ParamsNbody*>(params);
+    // the SH domain flag must describe this call only (read by the propagators after a failure)
+    if (parameters->sh) {
+        parameters->sh_ws->below_rho_min = false;
+    }
     double et0 = parameters->et0;
     std::vector<double> GM = parameters->GM;
     std::vector<std::string> BODIES = parameters->BODIES;
@@ -93,6 +97,24 @@ int eom_stm_NBody(double t, const double p[], double pdot[], void* params) {
         for (int j = 0; j < 3; j++) {
             for (int k = 0; k < 3; k++) {
                 Uxx[j][k] += Uxx_i[j][k];
+            }
+        }
+    }
+
+    // central-body spherical harmonics, acceleration and gradient
+    if (parameters->sh) {
+        double a_sh[3];
+        double Uxx_sh[3][3];
+        int status = sh_perturbation_nbody(*parameters, t, position_spacecraft, a_sh, Uxx_sh, true);
+        if (status != GSL_SUCCESS) {
+            return status;
+        }
+        ax = ax + a_sh[0];
+        ay = ay + a_sh[1];
+        az = az + a_sh[2];
+        for (int j = 0; j < 3; j++) {
+            for (int k = 0; k < 3; k++) {
+                Uxx[j][k] += Uxx_sh[j][k];
             }
         }
     }

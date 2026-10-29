@@ -3,7 +3,8 @@
  * with N-body and SRP perturbations, and analytic Jacobian for the STM.
  *
  * Notation and equation numbers follow docs/gve_mee.md. The perturbing acceleration is
- * exactly the one eom_NBodySRP adds to the central-body term.
+ * exactly the one eom_NBodySRP adds to the central-body term (including the optional
+ * central-body spherical harmonics, docs/spherical_harmonics.md).
  */
 
 #include <cmath>
@@ -15,8 +16,9 @@
 #include "eoms_gve.h"
 #include "mee.h"
 #include "gravity_gradient_Nbody.h"
-#include "perturbations/perturbations.h"
+#include "perturbations/thirdbody.h"
 #include "perturbations/SRP.h"
+#include "eoms.h"
 
 namespace {
 
@@ -47,6 +49,10 @@ int gve_evaluate(double t, const double x[], const ParamsNbody& parameters,
     const double TU = parameters.TU;
     const double mu = GM[0];
     const bool compute_jacobian = (A != nullptr);
+    // the SH domain flag must describe this call only (read by the propagators after a failure)
+    if (parameters.sh) {
+        parameters.sh_ws->below_rho_min = false;
+    }
 
     ConstSpiceChar * frame_cspice = parameters.frame.c_str();
     ConstSpiceChar * ref_body_name = BODIES[0].c_str();
@@ -126,6 +132,27 @@ int gve_evaluate(double t, const double x[], const ParamsNbody& parameters,
             for (int j = 0; j < 3; j++) {
                 for (int l = 0; l < 3; l++) {
                     G[j][l] += G_srp[j][l];
+                }
+            }
+        }
+    }
+
+    // 4b. central-body spherical harmonics (G_sh, sec. 5.5)
+    if (parameters.sh) {
+        double a_sh[3];
+        double G_sh[3][3];
+        int status = sh_perturbation_nbody(parameters, t, rvec, a_sh,
+                                           compute_jacobian ? G_sh : nullptr, reset_spice_errors);
+        if (status != GSL_SUCCESS) {
+            return status;
+        }
+        for (int j = 0; j < 3; j++) {
+            aI[j] += a_sh[j];
+        }
+        if (compute_jacobian) {
+            for (int j = 0; j < 3; j++) {
+                for (int l = 0; l < 3; l++) {
+                    G[j][l] += G_sh[j][l];
                 }
             }
         }

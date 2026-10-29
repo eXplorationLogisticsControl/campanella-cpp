@@ -10,8 +10,9 @@
 #include <SpiceUsr.h>          // access SPICE files
 #include "params.h"
 #include "eoms.h"
-#include "perturbations/perturbations.h"
+#include "perturbations/thirdbody.h"
 #include "perturbations/SRP.h"
+#include "perturbations/spherical_harmonics.h"
 
 
 /**
@@ -34,10 +35,44 @@ int eom_twobody(double t, const double y[], double dydt[], void* params) {
 
 
 /**
+ * Central-body spherical-harmonics perturbation for the N-body EOMs
+ *
+ * @param parameters N-body parameters, with parameters.sh not null
+ * @param t time, in TU
+ * @param rvec spacecraft position, in LU
+ * @param a acceleration to be computed, in LU/TU^2
+ * @param GG 3-by-3 gradient to be computed, or nullptr to skip it
+ * @param reset_spice_errors if true, call reset_c() on a SPICE error
+ * @return GSL_SUCCESS; GSL_FAILURE on SPICE error; GSL_EDOM below sh_rho_min * R
+ */
+int sh_perturbation_nbody(const ParamsNbody& parameters, double t, const double rvec[3],
+                          double a[3], double GG[3][3], bool reset_spice_errors) {
+    SpiceDouble et = parameters.et0 + t*parameters.TU;  // ephemeris query time
+    bool ok = sh_perturbation(rvec, et, parameters.frame.c_str(), parameters.frame_bf.c_str(),
+                              *parameters.sh, *parameters.sh_ws, parameters.mu_sh, parameters.R_sh,
+                              a, GG, parameters.sh_rho_min);
+    if (failed_c()) {
+        if (reset_spice_errors) {
+            reset_c();
+        }
+        return GSL_FAILURE;
+    }
+    if (!ok) {
+        return GSL_EDOM;   // below sh_rho_min * R: the series may diverge
+    }
+    return GSL_SUCCESS;
+}
+
+
+/**
  * N-body equations of motion compatible for GSL
  */
 int eom_NBody(double t, const double p[], double pdot[], void* params) {
     ParamsNbody* parameters = static_cast<ParamsNbody*>(params);
+    // the SH domain flag must describe this call only (read by the propagators after a failure)
+    if (parameters->sh) {
+        parameters->sh_ws->below_rho_min = false;
+    }
     double et0 = parameters->et0;
     std::vector<double> GM = parameters->GM;
     std::vector<std::string> BODIES = parameters->BODIES;
@@ -91,6 +126,19 @@ int eom_NBody(double t, const double p[], double pdot[], void* params) {
             return GSL_FAILURE;
         }
     }
+
+    // central-body spherical harmonics
+    if (parameters->sh) {
+        double rvec[3] = {x, y, z};
+        double a_sh[3];
+        int status = sh_perturbation_nbody(*parameters, t, rvec, a_sh, nullptr, true);
+        if (status != GSL_SUCCESS) {
+            return status;
+        }
+        ax = ax + a_sh[0];
+        ay = ay + a_sh[1];
+        az = az + a_sh[2];
+    }
     pdot[3] = ax;
     pdot[4] = ay;
     pdot[5] = az;
@@ -103,6 +151,10 @@ int eom_NBody(double t, const double p[], double pdot[], void* params) {
  */
 int eom_NBodySRP(double t, const double p[], double pdot[], void* params) {
     ParamsNbody* parameters = static_cast<ParamsNbody*>(params);
+    // the SH domain flag must describe this call only (read by the propagators after a failure)
+    if (parameters->sh) {
+        parameters->sh_ws->below_rho_min = false;
+    }
     double et0 = parameters->et0;
     std::vector<double> GM = parameters->GM;
     std::vector<std::string> BODIES = parameters->BODIES;
@@ -172,6 +224,19 @@ int eom_NBodySRP(double t, const double p[], double pdot[], void* params) {
     ax = ax + ai_SRP[0];
     ay = ay + ai_SRP[1];
     az = az + ai_SRP[2];
+
+    // central-body spherical harmonics
+    if (parameters->sh) {
+        double rvec[3] = {x, y, z};
+        double a_sh[3];
+        int status = sh_perturbation_nbody(*parameters, t, rvec, a_sh, nullptr, true);
+        if (status != GSL_SUCCESS) {
+            return status;
+        }
+        ax = ax + a_sh[0];
+        ay = ay + a_sh[1];
+        az = az + a_sh[2];
+    }
 
     pdot[3] = ax;
     pdot[4] = ay;

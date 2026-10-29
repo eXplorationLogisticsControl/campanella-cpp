@@ -12,6 +12,8 @@ Two-body equations of motion
 #include "SpiceUsr.h"
 
 #include "eoms/params.h"
+#include "perturbations/spherical_harmonics.h"
+#include "propagate/propagate_stm_Nbody.h"
 #include "eoms/eoms_stm.h"
 
 
@@ -27,6 +29,7 @@ Two-body equations of motion
  * @param TU time unit
  * @param reltol relative error tolerance, defaults to 1e-14
  * @param abstol absolute error tolerance, defaults to 1e-12
+ * @param sh optional central-body gravity field (file, nmax, mmax, frame_bf); off if sh.file is empty
  * @return vector of tuples containing state history
  */
 std::vector<std::tuple<double,
@@ -45,21 +48,15 @@ std::vector<std::tuple<double,
     std::string frame,
     double LU,
     double TU,
-    double reltol = 1e-14,
-    double abstol = 1e-12){
+    double reltol,
+    double abstol,
+    const SphericalHarmonicsOptions& sh){
     const int state_dim = 42;      // number of states
 
     // Check if the length of state0 is 42
     if (state0.size() != state_dim) {
         throw std::invalid_argument("Invalid state0 length. Expected length 42 (state + stm flattened).");
     }
-
-    const gsl_odeiv2_step_type* stepper = gsl_odeiv2_step_rk8pd;
-    gsl_odeiv2_step* step = gsl_odeiv2_step_alloc(stepper, state_dim);
-
-	// ref: https://www.gnu.org/software/gsl/doc/html/ode-initval.html#c.gsl_odeiv2_control_y_new
-    gsl_odeiv2_control* control = gsl_odeiv2_control_y_new(abstol, reltol);
-    gsl_odeiv2_evolve* evolve = gsl_odeiv2_evolve_alloc(state_dim);
 
     // define input parameters for gsl_odeiv2_system 
 	ParamsNbody params;
@@ -69,6 +66,14 @@ std::vector<std::tuple<double,
     params.frame = frame;
     params.LU = LU;
     params.TU = TU;
+    setup_spherical_harmonics(params, sh);   // may throw: before the GSL allocations
+
+    const gsl_odeiv2_step_type* stepper = gsl_odeiv2_step_rk8pd;
+    gsl_odeiv2_step* step = gsl_odeiv2_step_alloc(stepper, state_dim);
+
+	// ref: https://www.gnu.org/software/gsl/doc/html/ode-initval.html#c.gsl_odeiv2_control_y_new
+    gsl_odeiv2_control* control = gsl_odeiv2_control_y_new(abstol, reltol);
+    gsl_odeiv2_evolve* evolve = gsl_odeiv2_evolve_alloc(state_dim);
 
     // define ODE
     gsl_odeiv2_system sys = {eom_stm_NBody, nullptr, state_dim, &params};
@@ -102,11 +107,16 @@ std::vector<std::tuple<double,
                                y[30], y[31], y[32], y[33], y[34], y[35],
                                y[36], y[37], y[38], y[39], y[40], y[41]);
 
+    bool sh_domain_failure = false;
     while (t < t1) {
         int status = gsl_odeiv2_evolve_apply(evolve, control, step, &sys, &t, t1, &h, y);
 
         if (status != GSL_SUCCESS) {
-            std::cerr << "Error: Integration failed." << std::endl;
+            // below sh_rho_min * R: raise instead of returning a truncated trajectory
+            sh_domain_failure = sh_below_rho_min(params);
+            if (!sh_domain_failure) {
+                std::cerr << "Error: Integration failed." << std::endl;
+            }
             break;
         }
 
@@ -124,6 +134,9 @@ std::vector<std::tuple<double,
     gsl_odeiv2_evolve_free(evolve);
     gsl_odeiv2_control_free(control);
     gsl_odeiv2_step_free(step);
+    if (sh_domain_failure) {
+        throw_sh_domain_error(params, t);
+    }
 
     return trajectory_stm;
 }

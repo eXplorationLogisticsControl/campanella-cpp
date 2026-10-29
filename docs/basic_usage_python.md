@@ -96,3 +96,38 @@ Notes:
 - `campanella.mee2cart_jacobian(mee, mu)` returns d(r, v)/d(MEE) as a flattened 6x6 matrix. Use it to map the STM between MEE and Cartesian coordinates.
 - `prop.eval_jacobian(et0, t, x)` returns `(xdot, A)`, the right-hand side and its 6x6 Jacobian (flattened) at a single state.
 - `p` is in LU and the other elements are O(1), so the absolute tolerance applies differently to `p`. For long arcs, choose LU close to `p`.
+
+### Central-body gravity field (spherical harmonics)
+
+`PropagatorNbody`, `PropagatorNbodySrp` and `PropagatorGve` accept an optional gravity field of the central body, given as `sh_file`, `sh_nmax`, `sh_mmax`, `frame_bf` and `sh_rho_min`. For example, use `sh_file="gggrx_1200a_sha.tab", sh_nmax=50, frame_bf="MOON_PA"` for the Moon, or an EGM2008 `.gfc` file with `frame_bf="ITRF93"` for the Earth. The file formats, the SPICE frame kernels and the GM policy are in [spherical_harmonics.md](spherical_harmonics.md).
+
+### Canonical units
+
+Every propagator takes `LU` (km) and `TU` (s). States, `tspan` and `GM` must then be given in those units, while `et0` stays in ephemeris seconds and SRP's `A` (m^2) and `m` (kg) stay physical. A common choice for a Moon-centred problem makes the lunar GM equal to 1:
+
+```python
+MU_MOON = 4.902800582147760e+03
+LU = 100000.0                       # km
+VU = np.sqrt(MU_MOON / LU)          # km/s
+TU = LU / VU                        # s, about 5.2 days
+
+GM_canon = [gm / MU_MOON for gm in GM]          # = gm * TU**2 / LU**3
+state0_canon = np.concatenate((np.array(state0[:3]) / LU, np.array(state0[3:]) / VU))
+tspan_canon = [0.0, 20*86400.0 / TU]
+
+prop = campanella.PropagatorGve(
+    GM = GM_canon, BODIES = ["MOON", "EARTH", "SUN"], frame = "J2000",
+    A = 34.675, m = 1850, rhoS = 0.9, rhoD = 0,
+    LU = LU, TU = TU,
+)
+mee0 = campanella.cart2mee(list(state0_canon), 1.0)    # p in LU
+traj = prop.solve_ivp(et0, tspan_canon, mee0)
+```
+
+To convert results back:
+
+- Cartesian states: multiply positions by `LU` and velocities by `VU`; times by `TU`.
+- MEE: multiply only `p` by `LU`. `f, g, h, k, L` are dimensionless.
+- STMs: `Phi_km = D @ Phi_canon @ inv(D)`, with `D = diag(LU, LU, LU, VU, VU, VU)` for Cartesian states and `D = diag(LU, 1, 1, 1, 1, 1)` for MEE.
+
+`abstol` applies to the scaled variables, so `abstol = 1e-12` corresponds to 1e-7 km at `LU = 100000`. `test-python/test_canonical_moon.py` and `examples/solve_moon_canonical.cpp` check each Moon-centred propagator in these units against the same run in km and seconds.

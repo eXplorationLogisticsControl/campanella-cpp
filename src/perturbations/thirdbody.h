@@ -1,5 +1,5 @@
-#ifndef PERTURBATIONS_H
-#define PERTURBATIONS_H
+#ifndef THIRDBODY_H
+#define THIRDBODY_H
 
 #include <vector>
 #include <SpiceUsr.h>          // access SPICE files
