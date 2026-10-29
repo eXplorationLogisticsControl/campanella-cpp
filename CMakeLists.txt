@@ -317,6 +317,11 @@ if(CAMPANELLA_BUILD_CPP)
     target_link_libraries(solve_gve PRIVATE campanella)
     set_target_properties(solve_gve PROPERTIES
         BUILD_RPATH "$<TARGET_FILE_DIR:campanella>")
+
+    add_executable(solve_moon_canonical examples/solve_moon_canonical.cpp)
+    target_link_libraries(solve_moon_canonical PRIVATE campanella)
+    set_target_properties(solve_moon_canonical PROPERTIES
+        BUILD_RPATH "$<TARGET_FILE_DIR:campanella>")
 endif()
 
 if(CAMPANELLA_BUILD_PYTHON)

@@ -41,6 +41,7 @@ jobs:
           ./build-cpp/bin/solve_Nbody
           ./build-cpp/bin/solve_NbodySTM
           ./build-cpp/bin/solve_gve
+          ./build-cpp/bin/solve_moon_canonical
 
       - uses: astral-sh/setup-uv@v5
         with:
