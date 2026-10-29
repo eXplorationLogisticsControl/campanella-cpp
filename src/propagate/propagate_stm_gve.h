@@ -4,6 +4,7 @@
 #include <string>
 #include <tuple>
 #include <vector>
+#include "perturbations/spherical_harmonics.h"
 
 std::vector<std::tuple<double,
                     double, double, double, double, double, double,
@@ -26,7 +27,8 @@ std::vector<std::tuple<double,
     double LU,
     double TU,
     double reltol = 1e-14,
-    double abstol = 1e-12);
+    double abstol = 1e-12,
+    const SphericalHarmonicsOptions& sh = SphericalHarmonicsOptions());
     
 #endif // PROPAGATE_STM_GVE_H
 

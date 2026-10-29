@@ -9,12 +9,14 @@
 ├── docs
 │   ├── basic_usage_python.md
 │   ├── build_library.md
-│   └── gve_mee.md                    # GVE in modified equinoctial elements and their STM
+│   ├── gve_mee.md                    # GVE in modified equinoctial elements and their STM
+│   └── spherical_harmonics.md        # central-body gravity field (arbitrary degree/order)
 ├── examples
 │   ├── solve_Nbody.cpp               # N-body propagation; needs SPICE kernels
 │   ├── solve_NbodySTM.cpp            # N-body state and state-transition matrix
 │   ├── solve_gve.cpp                 # N-body + SRP in MEE (GVE), checked against Cartesian
 │   ├── solve_moon_canonical.cpp      # Moon-centered propagators in canonical units vs km/s
+│   ├── solve_sh.cpp                  # low lunar orbit with a GRAIL gravity field, STM check
 │   └── solve_twobody.cpp             # two-body propagation
 ├── include
 │   └── campanella.hpp                # public C++ header
@@ -97,6 +99,7 @@ For further details see:
 
 - building the library: [docs/build_library.md](docs/build_library.md)
 - using the library via python: [docs/basic_usage_python.md](docs/basic_usage_python.md)
+- central-body spherical harmonics: [docs/spherical_harmonics.md](docs/spherical_harmonics.md)
 
 
 ## Common Issues
@@ -149,14 +152,14 @@ Load the kernels with `campanella.furnsh(path)`. `spiceypy.furnsh()` loads a dif
   - [x] N-body
   - [x] N-body + SRP
   - [x] N-body + SRP in MEE (Gauss variational equations)
-  - [ ] N-body + spherical harmonics
+  - [x] N-body + spherical harmonics (Cartesian and MEE)
 - [ ] Equations of motion with state-transition matrix
   - [ ] Two-body
   - [ ] CR3BP
   - [x] N-body
   - [ ] N-body + SRP (Cartesian)
   - [x] N-body + SRP in MEE (Gauss variational equations)
-  - [ ] N-body + spherical harmonics
+  - [x] N-body + spherical harmonics (Cartesian and MEE)
 
 
 ### Optimal Control Problem

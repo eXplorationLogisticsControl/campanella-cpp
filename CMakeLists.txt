@@ -264,7 +264,8 @@ add_library(campanella_core OBJECT
     src/eoms/mee.cpp
     src/eoms/gravity_gradient_Nbody.cpp
     src/perturbations/thirdbody.cpp
-    src/perturbations/SRP.cpp)
+    src/perturbations/SRP.cpp
+    src/perturbations/spherical_harmonics.cpp)
 set_target_properties(campanella_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(campanella_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
@@ -321,6 +322,13 @@ if(CAMPANELLA_BUILD_CPP)
     add_executable(solve_moon_canonical examples/solve_moon_canonical.cpp)
     target_link_libraries(solve_moon_canonical PRIVATE campanella)
     set_target_properties(solve_moon_canonical PROPERTIES
+        BUILD_RPATH "$<TARGET_FILE_DIR:campanella>")
+
+    add_executable(solve_sh examples/solve_sh.cpp)
+    target_link_libraries(solve_sh PRIVATE campanella)
+    # default gravity field: test-python/data/gggrx_1200a_sha_n10.tab
+    target_compile_definitions(solve_sh PRIVATE CAMPANELLA_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    set_target_properties(solve_sh PROPERTIES
         BUILD_RPATH "$<TARGET_FILE_DIR:campanella>")
 endif()
 

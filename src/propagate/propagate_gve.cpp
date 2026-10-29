@@ -12,6 +12,7 @@ Gauss variational equations in modified equinoctial elements
 #include "SpiceUsr.h"
 
 #include "eoms/params.h"
+#include "perturbations/spherical_harmonics.h"
 #include "eoms/eoms_gve.h"
 #include "propagate/propagate_gve.h"
 
@@ -31,6 +32,7 @@ Gauss variational equations in modified equinoctial elements
  * @param TU time unit
  * @param reltol relative error tolerance, defaults to 1e-14
  * @param abstol absolute error tolerance, defaults to 1e-12
+ * @param sh optional central-body gravity field (file, nmax, mmax, frame_bf); off if sh.file is empty
  * @return vector of tuples containing state history, (t,p,f,g,h,k,L); L is not wrapped
  */
 std::vector<std::tuple<double, double, double, double, double, double, double>> solve_ivp_gve(
@@ -47,7 +49,8 @@ std::vector<std::tuple<double, double, double, double, double, double, double>> 
     double LU,
     double TU,
     double reltol,
-    double abstol){
+    double abstol,
+    const SphericalHarmonicsOptions& sh){
     const int state_dim = 6;      // number of states
     if (state0.size() != state_dim) {
         throw std::invalid_argument("Invalid state0 length. Expected length 6.");
@@ -58,13 +61,6 @@ std::vector<std::tuple<double, double, double, double, double, double, double>> 
     if (tspan[1] < tspan[0]) {
         throw std::invalid_argument("Invalid tspan: tf < t0. Only forward propagation is supported.");
     }
-
-    const gsl_odeiv2_step_type* stepper = gsl_odeiv2_step_rk8pd;
-    gsl_odeiv2_step* step = gsl_odeiv2_step_alloc(stepper, state_dim);
-
-	// ref: https://www.gnu.org/software/gsl/doc/html/ode-initval.html#c.gsl_odeiv2_control_y_new
-    gsl_odeiv2_control* control = gsl_odeiv2_control_y_new(abstol, reltol);
-    gsl_odeiv2_evolve* evolve = gsl_odeiv2_evolve_alloc(state_dim);
 
     // define input parameters for gsl_odeiv2_system 
 	ParamsNbody params;
@@ -78,6 +74,14 @@ std::vector<std::tuple<double, double, double, double, double, double, double>> 
     params.rhoD = rhoD;
     params.LU = LU;
     params.TU = TU;
+    setup_spherical_harmonics(params, sh);   // may throw: before the GSL allocations
+
+    const gsl_odeiv2_step_type* stepper = gsl_odeiv2_step_rk8pd;
+    gsl_odeiv2_step* step = gsl_odeiv2_step_alloc(stepper, state_dim);
+
+	// ref: https://www.gnu.org/software/gsl/doc/html/ode-initval.html#c.gsl_odeiv2_control_y_new
+    gsl_odeiv2_control* control = gsl_odeiv2_control_y_new(abstol, reltol);
+    gsl_odeiv2_evolve* evolve = gsl_odeiv2_evolve_alloc(state_dim);
 
     // define ODE
     gsl_odeiv2_system sys = {eom_gve_NBodySRP, nullptr, state_dim, &params};
@@ -98,11 +102,16 @@ std::vector<std::tuple<double, double, double, double, double, double, double>> 
     // Store the initial state at time tspan[0]
     trajectory.emplace_back(t, y[0], y[1], y[2], y[3], y[4], y[5]);
 
+    bool sh_domain_failure = false;
     while (t < t1) {
         int status = gsl_odeiv2_evolve_apply(evolve, control, step, &sys, &t, t1, &h, y);
 
         if (status != GSL_SUCCESS) {
-            std::cerr << "Error: Integration failed." << std::endl;
+            // below sh_rho_min * R: raise instead of returning a truncated trajectory
+            sh_domain_failure = sh_below_rho_min(params);
+            if (!sh_domain_failure) {
+                std::cerr << "Error: Integration failed." << std::endl;
+            }
             break;
         }
 
@@ -114,6 +123,9 @@ std::vector<std::tuple<double, double, double, double, double, double, double>> 
     gsl_odeiv2_evolve_free(evolve);
     gsl_odeiv2_control_free(control);
     gsl_odeiv2_step_free(step);
+    if (sh_domain_failure) {
+        throw_sh_domain_error(params, t);
+    }
 
     return trajectory;
 }
@@ -134,6 +146,7 @@ std::vector<std::tuple<double, double, double, double, double, double, double>> 
  * @param rhoD scattering rate of spacecraft
  * @param LU length unit
  * @param TU time unit
+ * @param sh optional central-body gravity field (file, nmax, mmax, frame_bf); off if sh.file is empty
  * @return pair (xdot, A) with A = d(xdot)/dx, 6x6 row-major
  */
 std::pair<std::vector<double>, std::vector<double>> eval_jacobian_gve(
@@ -148,7 +161,8 @@ std::pair<std::vector<double>, std::vector<double>> eval_jacobian_gve(
     double rhoS,
     double rhoD,
     double LU,
-    double TU) {
+    double TU,
+    const SphericalHarmonicsOptions& sh) {
     if (x.size() != 6) {
         throw std::invalid_argument("Invalid x length. Expected length 6.");
     }
@@ -163,6 +177,7 @@ std::pair<std::vector<double>, std::vector<double>> eval_jacobian_gve(
     params.rhoD = rhoD;
     params.LU = LU;
     params.TU = TU;
+    setup_spherical_harmonics(params, sh);
 
     // Out-of-domain states throw here; inside the integrator they are a recoverable GSL_EDOM
     const double w = 1 + x[1]*std::cos(x[5]) + x[2]*std::sin(x[5]);
@@ -176,6 +191,9 @@ std::pair<std::vector<double>, std::vector<double>> eval_jacobian_gve(
     std::vector<double> xdot(6, 0.0);
     double jac[6][6];
     int status = eval_gve_jacobian_NBodySRP(t, x.data(), xdot.data(), jac, &params);
+    if (status != GSL_SUCCESS && sh_below_rho_min(params)) {
+        throw_sh_domain_error(params, t);
+    }
     if (status != GSL_SUCCESS) {
         std::string msg = "eval_jacobian_gve: evaluation failed";
         if (failed_c()) {

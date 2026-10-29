@@ -5,6 +5,7 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+#include "perturbations/spherical_harmonics.h"
 
 std::vector<std::tuple<double, double, double, double, double, double, double>> solve_ivp_gve(
     double et0,
@@ -20,7 +21,8 @@ std::vector<std::tuple<double, double, double, double, double, double, double>> 
     double LU,
     double TU,
     double reltol = 1e-14,
-    double abstol = 1e-12);
+    double abstol = 1e-12,
+    const SphericalHarmonicsOptions& sh = SphericalHarmonicsOptions());
 
 std::pair<std::vector<double>, std::vector<double>> eval_jacobian_gve(
     double et0,
@@ -34,5 +36,6 @@ std::pair<std::vector<double>, std::vector<double>> eval_jacobian_gve(
     double rhoS,
     double rhoD,
     double LU,
-    double TU);
+    double TU,
+    const SphericalHarmonicsOptions& sh = SphericalHarmonicsOptions());
 #endif // PROPAGATE_GVE_H

@@ -97,6 +97,10 @@ Notes:
 - `prop.eval_jacobian(et0, t, x)` returns `(xdot, A)`, the right-hand side and its 6x6 Jacobian (flattened) at a single state.
 - `p` is in LU and the other elements are O(1), so the absolute tolerance applies differently to `p`. For long arcs, choose LU close to `p`.
 
+### Central-body gravity field (spherical harmonics)
+
+`PropagatorNbody`, `PropagatorNbodySrp` and `PropagatorGve` accept an optional gravity field of the central body, given as `sh_file`, `sh_nmax`, `sh_mmax`, `frame_bf` and `sh_rho_min`. For example, use `sh_file="gggrx_1200a_sha.tab", sh_nmax=50, frame_bf="MOON_PA"` for the Moon, or an EGM2008 `.gfc` file with `frame_bf="ITRF93"` for the Earth. The file formats, the SPICE frame kernels and the GM policy are in [spherical_harmonics.md](spherical_harmonics.md).
+
 ### Canonical units
 
 Every propagator takes `LU` (km) and `TU` (s). States, `tspan` and `GM` must then be given in those units, while `et0` stays in ephemeris seconds and SRP's `A` (m^2) and `m` (kg) stay physical. A common choice for a Moon-centred problem makes the lunar GM equal to 1:
