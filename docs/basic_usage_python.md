@@ -51,3 +51,48 @@ prop = campanella.PropagatorTwoBody(GM, reltol=1e-12, abstol=1e-11)
 
 Default values for the tolerances are `reltol=1e-14` and `abstol=1e-12`. 
 
+
+
+### N-body + SRP in modified equinoctial elements
+
+`PropagatorGve` integrates the Gauss variational equations in modified equinoctial elements (MEE) `[p, f, g, h, k, L]`. Its perturbations are the same as `PropagatorNbodySrp`: `BODIES[0]` is the central body, the other bodies are third bodies, and SRP is added unless `A = 0`. The constructor takes the same arguments as `PropagatorNbodySrp`. The formulas are in [gve_mee.md](gve_mee.md).
+
+`mee2cart(mee, mu)` and `cart2mee(rv, mu)` convert between MEE and Cartesian states. `mu` is the central body's `GM[0]`.
+
+```python
+import numpy as np
+import campanella
+
+campanella.furnsh("/path/to/lsk/naif0012.tls")
+campanella.furnsh("/path/to/spk/de440.bsp")
+
+et0 = 740463475.5117936
+state0 = [-7505.7613773288285, 44128.19419987408, -55792.327508873765,
+          0.07193326412942684, 0.018407794390508374, 0.004868437733535174]
+GM = [4.902800582147760e+03, 398600.432896939, 132712197035.766]
+
+prop = campanella.PropagatorGve(
+    GM = GM,
+    BODIES = ["MOON", "EARTH", "SUN"],
+    frame = "J2000",
+    A = 34.675, m = 1850, rhoS = 0.9, rhoD = 0,
+    LU = 1.0, TU = 1.0,
+)
+mee0 = campanella.cart2mee(state0, GM[0])
+traj = prop.solve_ivp(et0, [0.0, 20*86400.0], mee0)        # rows (t, p, f, g, h, k, L)
+rv_final = campanella.mee2cart(list(traj[-1][1:]), GM[0])   # [x, y, z, vx, vy, vz]
+
+# state and 6x6 STM d(mee(t))/d(mee(t0)), flattened row-major after the state
+traj_stm = prop.solve_ivp_stm(et0, [0.0, 20*86400.0], list(mee0) + list(np.eye(6).flatten()))
+stm_final = np.array(traj_stm[-1][7:]).reshape(6, 6)
+```
+
+Notes:
+
+- The elements are prograde (retrograde factor I = +1). They are singular at an inclination of 180 degrees, where h and k grow without bound. `cart2mee` raises `ValueError` within about 1.4e-6 rad of 180 degrees. The propagator has no singularity check: it keeps integrating, and accuracy degrades as the orbit approaches 180 degrees or as w = 1 + f cos L + g sin L approaches 0. A trial step that leaves the domain (p <= 0 or w <= 0) only makes the integrator retry with a smaller step.
+- `tspan` must be `[t0, tf]` with `tf >= t0`. Only forward propagation is supported; anything else raises `ValueError`.
+- `cart2mee` returns `L` in (-pi, pi]. The propagator does not wrap `L`, so it grows by 2 pi each revolution. When you compare `L` values, compare the wrapped difference.
+- `mee2cart` raises `ValueError` if `p <= 0` or `1 + f cos L + g sin L <= 0`.
+- `campanella.mee2cart_jacobian(mee, mu)` returns d(r, v)/d(MEE) as a flattened 6x6 matrix. Use it to map the STM between MEE and Cartesian coordinates.
+- `prop.eval_jacobian(et0, t, x)` returns `(xdot, A)`, the right-hand side and its 6x6 Jacobian (flattened) at a single state.
+- `p` is in LU and the other elements are O(1), so the absolute tolerance applies differently to `p`. For long arcs, choose LU close to `p`.

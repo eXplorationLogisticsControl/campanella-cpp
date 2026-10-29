@@ -40,6 +40,7 @@ jobs:
           ./build-cpp/bin/solve_twobody
           ./build-cpp/bin/solve_Nbody
           ./build-cpp/bin/solve_NbodySTM
+          ./build-cpp/bin/solve_gve
 
       - uses: astral-sh/setup-uv@v5
         with:

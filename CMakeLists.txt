@@ -256,8 +256,12 @@ add_library(campanella_core OBJECT
     src/propagate/propagate_Nbody.cpp
     src/propagate/propagate_NbodySRP.cpp
     src/propagate/propagate_stm_Nbody.cpp
+    src/propagate/propagate_gve.cpp
+    src/propagate/propagate_stm_gve.cpp
     src/eoms/eoms.cpp
     src/eoms/eoms_stm.cpp
+    src/eoms/eoms_gve.cpp
+    src/eoms/mee.cpp
     src/eoms/gravity_gradient_Nbody.cpp
     src/perturbations/perturbations.cpp
     src/perturbations/SRP.cpp)
@@ -307,6 +311,11 @@ if(CAMPANELLA_BUILD_CPP)
     add_executable(solve_NbodySTM examples/solve_NbodySTM.cpp)
     target_link_libraries(solve_NbodySTM PRIVATE campanella)
     set_target_properties(solve_NbodySTM PROPERTIES
+        BUILD_RPATH "$<TARGET_FILE_DIR:campanella>")
+
+    add_executable(solve_gve examples/solve_gve.cpp)
+    target_link_libraries(solve_gve PRIVATE campanella)
+    set_target_properties(solve_gve PROPERTIES
         BUILD_RPATH "$<TARGET_FILE_DIR:campanella>")
 endif()
 
