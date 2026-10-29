@@ -8,10 +8,12 @@
 .
 ├── docs
 │   ├── basic_usage_python.md
-│   └── build_library.md
+│   ├── build_library.md
+│   └── gve_mee.md                    # GVE in modified equinoctial elements and their STM
 ├── examples
 │   ├── solve_Nbody.cpp               # N-body propagation; needs SPICE kernels
 │   ├── solve_NbodySTM.cpp            # N-body state and state-transition matrix
+│   ├── solve_gve.cpp                 # N-body + SRP in MEE (GVE), checked against Cartesian
 │   └── solve_twobody.cpp             # two-body propagation
 ├── include
 │   └── campanella.hpp                # public C++ header
@@ -47,7 +49,7 @@ cmake -B build-cpp -S . -DCAMPANELLA_BUILD_PYTHON=OFF -DCAMPANELLA_BUILD_CPP=ON
 cmake --build build-cpp
 ```
 
-This writes `build-cpp/lib/libcampanella.dylib` on macOS, or `libcampanella.so` on Linux. Include `include/campanella.hpp` and link that library. GSL and CSPICE are already inside it, so do not also link CSPICE or spiceypy into the same process. The examples `solve_twobody`, `solve_Nbody`, and `solve_NbodySTM` are built in `build-cpp/bin` and find the library through its rpath. `solve_Nbody` and `solve_NbodySTM` load `lsk/naif0012.tls` and `spk/de440.bsp` from the directory in `SPICE`.
+This writes `build-cpp/lib/libcampanella.dylib` on macOS, or `libcampanella.so` on Linux. Include `include/campanella.hpp` and link that library. GSL and CSPICE are already inside it, so do not also link CSPICE or spiceypy into the same process. The examples `solve_twobody`, `solve_Nbody`, `solve_NbodySTM`, and `solve_gve` are built in `build-cpp/bin` and find the library through its rpath. `solve_Nbody`, `solve_NbodySTM`, and `solve_gve` load `lsk/naif0012.tls` and `spk/de440.bsp` from the directory in `SPICE`.
 
 ```bash
 c++ -std=c++17 my_ivp.cpp \
@@ -145,12 +147,14 @@ Load the kernels with `campanella.furnsh(path)`. `spiceypy.furnsh()` loads a dif
   - [ ] CR3BP
   - [x] N-body
   - [x] N-body + SRP
+  - [x] N-body + SRP in MEE (Gauss variational equations)
   - [ ] N-body + spherical harmonics
 - [ ] Equations of motion with state-transition matrix
   - [ ] Two-body
   - [ ] CR3BP
   - [x] N-body
-  - [ ] N-body + SRP
+  - [ ] N-body + SRP (Cartesian)
+  - [x] N-body + SRP in MEE (Gauss variational equations)
   - [ ] N-body + spherical harmonics
 
 
