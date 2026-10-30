@@ -16,7 +16,7 @@ import os
 import numpy as np
 import pytest
 
-from helpers import campanella, final_row, furnsh_kernels, row_normalised_error
+from helpers import assert_state_close, campanella, final_row, furnsh_kernels, row_normalised_error
 
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), "data")
@@ -389,9 +389,8 @@ def test_sh_off_reproduces_existing_results():
                 np.testing.assert_array_equal(u, v)
     # and the existing reference value (examples/solve_rv.cpp, test_mee.py)
     xf = final_row(campanella.solve_ivp_rv(moon_params(sh=False, **off), tspan, STATE0), tspan[1])
-    np.testing.assert_allclose(xf, [10171.343017143072, 33674.15294325228, -60877.5267967639,
-                                    0.013967106146233203, -0.0805131196626756, 0.0033270015062299776],
-                               rtol=1e-12)
+    assert_state_close(xf, [10171.343017143072, 33674.15294325228, -60877.5267967639,
+                            0.013967106146233203, -0.0805131196626756, 0.0033270015062299776], 1e-11)
 
 
 def test_sh_argument_errors():

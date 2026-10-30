@@ -158,6 +158,16 @@ inline double norm3_diff(const std::vector<double>& a, const std::vector<double>
     return std::sqrt(s);
 }
 
+// Position and velocity errors of a final state, relative to |r| and |v| of the reference.
+// Per-component relative tolerances are too tight for small components: rounding differences
+// between platforms (FMA contraction on arm64, libm, CSPICE builds) give ~1e-13 of |v| after 20 days.
+inline void expect_state_near(const std::vector<double>& x, const std::vector<double>& ref, double rtol) {
+    const std::vector<double> zero(6, 0.0);
+    const double r = norm3_diff(ref, zero, 0), v = norm3_diff(ref, zero, 3);
+    EXPECT_LE(norm3_diff(x, ref, 0), rtol * r) << "position";
+    EXPECT_LE(norm3_diff(x, ref, 3), rtol * v) << "velocity";
+}
+
 }  // namespace campanella_test
 
 #endif  // CAMPANELLA_TESTS_HELPERS_HPP

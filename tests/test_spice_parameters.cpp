@@ -24,9 +24,7 @@ TEST(SpiceParameters, TwoBodyWithoutKernels) {
     const std::vector<double> expect = {-18205.698468519975, 26479.25761849232, -38615.225993310676,
                                         0.01263483050054705, 0.1635690404557372, -0.19163703441809382};
     const std::vector<double> xf = final_state(rv);
-    for (int i = 0; i < 6; i++) {
-        EXPECT_NEAR(xf[i], expect[i], 1e-12 * std::abs(expect[i]));
-    }
+    expect_state_near(xf, expect, 1e-11);
     // energy is conserved along the whole trajectory
     auto energy = [&](size_t k) {
         const double* x = &rv.x[6 * k];

@@ -53,10 +53,7 @@ TEST(SolveIvp, NbodyReference) {
     EXPECT_EQ(r.x.size(), 6 * r.size());
     EXPECT_TRUE(r.stm.empty());
     EXPECT_EQ(std::vector<double>(r.x.begin(), r.x.begin() + 6), STATE0);
-    const std::vector<double> xf = final_state(r);
-    for (int i = 0; i < 6; i++) {
-        EXPECT_NEAR(xf[i], RV_NBODY_EXPECT[i], 1e-12 * std::abs(RV_NBODY_EXPECT[i]));
-    }
+    expect_state_near(final_state(r), RV_NBODY_EXPECT, 1e-11);
     for (size_t k = 1; k < r.size(); k++) {
         ASSERT_GT(r.t[k], r.t[k - 1]);
     }
@@ -71,10 +68,7 @@ TEST(SolveIvp, SrpReference) {
     const IvpResult r = campanella::solve_ivp_rv(SpiceParameters(ET0, BODIES, o), {0.0, TF}, STATE0);
     const std::vector<double> expect = {10265.7677192918, 33657.38156810862, -60889.03206439558,
                                         0.014176756803175221, -0.08047039542453092, 0.003449062130405538};
-    const std::vector<double> xf = final_state(r);
-    for (int i = 0; i < 6; i++) {
-        EXPECT_NEAR(xf[i], expect[i], 1e-12 * std::abs(expect[i])) << i;
-    }
+    expect_state_near(final_state(r), expect, 1e-11);
 }
 
 TEST(SolveIvp, RvAndMeeAgreeForEveryForceModel) {

@@ -52,3 +52,13 @@ def final_row(res, tf):
 def row_normalised_error(M, M_ref):
     """max over rows of max_j |M_ij - Mref_ij| / max_j |Mref_ij|"""
     return np.max(np.abs(M - M_ref).max(axis=1) / np.abs(M_ref).max(axis=1))
+
+
+def assert_state_close(x, x_ref, rtol):
+    """Position and velocity errors relative to |r| and |v| of x_ref. Per-component tolerances are
+    too tight for small components: rounding differences between platforms (FMA contraction on
+    arm64, libm, CSPICE builds) give ~1e-13 of |v| after 20 days."""
+    x, x_ref = np.asarray(x), np.asarray(x_ref)
+    for sl, what in ((slice(0, 3), "position"), (slice(3, 6), "velocity")):
+        err = np.linalg.norm(x[sl] - x_ref[sl])
+        assert err <= rtol * np.linalg.norm(x_ref[sl]), f"{what} error {err:.3e}"

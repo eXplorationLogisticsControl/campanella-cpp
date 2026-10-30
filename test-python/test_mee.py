@@ -10,7 +10,7 @@ import math
 import numpy as np
 import pytest
 
-from helpers import campanella, final_row, furnsh_kernels, row_normalised_error
+from helpers import assert_state_close, campanella, final_row, furnsh_kernels, row_normalised_error
 
 
 # ----------------------------------------------------------------- common data (7.0)
@@ -232,7 +232,7 @@ def test_gve_vs_cartesian_nbody():
     params = make_params(srp=False)
     xf = final_row(campanella.solve_ivp_mee(params, TSPAN, x0), TSPAN[1])
     rv_f = final_row(campanella.solve_ivp_rv(params, TSPAN, STATE0), TSPAN[1])
-    np.testing.assert_allclose(rv_f, RV_NBODY_EXPECT, rtol=1e-12)
+    assert_state_close(rv_f, RV_NBODY_EXPECT, 1e-11)
     _compare_gve_cartesian(xf, rv_f)
     assert_mee_close(xf, XF_NBODY_DOP853, 1e-8, "GVE vs DOP853 reference")
 

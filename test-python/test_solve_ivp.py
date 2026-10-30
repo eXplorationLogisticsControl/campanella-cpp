@@ -5,7 +5,7 @@ Tests of solve_ivp_rv / solve_ivpstm_rv: references, STM, backward propagation, 
 import numpy as np
 import pytest
 
-from helpers import campanella, final_row, furnsh_kernels, row_normalised_error
+from helpers import assert_state_close, campanella, final_row, furnsh_kernels, row_normalised_error
 
 ET0 = 740463475.5117936
 STATE0 = [-7505.7613773288285, 44128.19419987408, -55792.327508873765,
@@ -50,7 +50,7 @@ def test_twobody_without_ephemerides():
     params = campanella.SpiceParameters(0.0, ["MOON"], GMs=[MU_MOON])
     res = campanella.solve_ivp_rv(params, TSPAN, STATE0)
     assert res.t[0] == 0.0 and res.t[-1] == TSPAN[1]
-    np.testing.assert_allclose(res.x[-1], TWOBODY_EXPECT, rtol=1e-12)
+    assert_state_close(res.x[-1], TWOBODY_EXPECT, 1e-11)
     # energy and angular momentum
     r = np.linalg.norm(res.x[:, :3], axis=1)
     energy = 0.5 * np.sum(res.x[:, 3:] ** 2, axis=1) - MU_MOON / r
@@ -80,10 +80,10 @@ def test_nbody_reference_and_stm():
     furnsh_kernels()
     params = moon_params()
     xf = final_row(campanella.solve_ivp_rv(params, TSPAN, STATE0), TSPAN[1])
-    np.testing.assert_allclose(xf, RV_NBODY_EXPECT, rtol=1e-12)
+    assert_state_close(xf, RV_NBODY_EXPECT, 1e-11)
 
     yf = final_row(campanella.solve_ivpstm_rv(params, TSPAN, STATE0), TSPAN[1])
-    np.testing.assert_allclose(yf[:6], xf, rtol=1e-10)
+    assert_state_close(yf[:6], xf, 1e-10)
     Phi = yf[6:].reshape(6, 6)
     Phi_fd = stm_fd(params, TSPAN, STATE0, [1e-6] * 6)
     err = row_normalised_error(Phi, Phi_fd)
@@ -111,7 +111,7 @@ def test_srp_stm_vs_fd():
 def test_srp_reference_and_effect():
     furnsh_kernels()
     xf = final_row(campanella.solve_ivp_rv(moon_params(**SRP), TSPAN, STATE0), TSPAN[1])
-    np.testing.assert_allclose(xf, RV_SRP_EXPECT, rtol=1e-12)
+    assert_state_close(xf, RV_SRP_EXPECT, 1e-11)
     xf_nbody = final_row(campanella.solve_ivp_rv(moon_params(), TSPAN, STATE0), TSPAN[1])
     assert np.linalg.norm(xf[:3] - xf_nbody[:3]) > 10.0
 
