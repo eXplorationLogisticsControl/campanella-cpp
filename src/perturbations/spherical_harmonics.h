@@ -3,14 +3,11 @@
 
 // Central-body spherical-harmonics gravity: acceleration and gradient of the potential
 // U = (mu/R) sum_{n=2}^{nmax} sum_{m=0}^{n} (C_nm V_nm + S_nm W_nm), fully normalized.
-// See docs/spherical_harmonics.md. This header does not include SpiceUsr.h, so that the
-// public header campanella.hpp can include it.
+// See docs/spherical_harmonics.md. This header does not include SpiceUsr.h.
 
 #include <memory>
 #include <string>
 #include <vector>
-
-struct ParamsNbody;
 
 // Largest supported truncation degree (no sectoral rescaling, see docs/spherical_harmonics.md)
 const int SH_NMAX_LIMIT = 1200;
@@ -51,18 +48,6 @@ struct SphericalHarmonicsWorkspace {
     explicit SphericalHarmonicsWorkspace(int nmax);
 };
 
-/**
- * Optional gravity field of the central body, as passed to the propagators.
- * An empty file turns the spherical harmonics off.
- */
-struct SphericalHarmonicsOptions {
-    std::string file;        // PDS SHADR .tab or ICGEM .gfc; "" => off
-    int nmax = 0;            // truncation degree, >= 2 when file is given
-    int mmax = -1;           // truncation order; -1 => min(nmax, order of the file)
-    std::string frame_bf;    // body-fixed frame of the coefficients, e.g. "MOON_PA", "ITRF93"
-    double rho_min = 1.0;    // smallest |r|/R evaluated; 0 < rho_min <= 1 (below 1 the series may diverge)
-};
-
 // Load a PDS SHADR .tab or ICGEM .gfc file (auto-detected), truncated to nmax, mmax
 // (mmax < 0 => min(nmax, order of the file)).
 // Throws std::runtime_error or std::invalid_argument on any problem.
@@ -97,14 +82,5 @@ bool sh_perturbation(const double rvec[3],
                      double a[3],
                      double GG[3][3],
                      double rho_min = 1.0);
-
-// Attach the gravity field of options to params (GM, LU and TU must be set). No-op if options.file is empty.
-void setup_spherical_harmonics(ParamsNbody& params, const SphericalHarmonicsOptions& options);
-
-// True if the last spherical-harmonics evaluation of params refused a position below rho_min * R
-bool sh_below_rho_min(const ParamsNbody& params);
-
-// Throw std::domain_error explaining that the trajectory went below rho_min * R at time t (TU)
-[[noreturn]] void throw_sh_domain_error(const ParamsNbody& params, double t);
 
 #endif // SPHERICAL_HARMONICS_H

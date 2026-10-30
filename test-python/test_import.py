@@ -1,27 +1,13 @@
-import sys
-import os
+from helpers import campanella, furnsh_kernels
 
-if sys.platform == "win32":
-    load_dir = "build/Release"
-else:
-    load_dir = "build/lib"
-
-sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", load_dir))
-
-
-import campanella
-
-def furnsh_kernels():
-    spice_dir = os.environ["SPICE"]
-    campanella.furnsh(os.path.join(spice_dir, "lsk", "naif0012.tls"))
-    campanella.furnsh(os.path.join(spice_dir, "spk", "de440.bsp"))
 
 def test_import():
     furnsh_kernels()
-    campanella.add_j2000(2, 3)
-    assert True
-
-
-if __name__=="__main__":
-    test_import()
-    print("Done!")
+    for name in ["SpiceParameters", "IvpResult", "solve_ivp_rv", "solve_ivp_mee", "solve_ivpstm_rv",
+                 "solve_ivpstm_mee", "eom_rv", "eom_mee", "eomstm_rv", "eomstm_mee", "eval_rv",
+                 "eval_mee", "furnsh", "mee2cart", "cart2mee", "mee2cart_jacobian",
+                 "load_spherical_harmonics", "sh_accel_bf", "sh_accel_inertial"]:
+        assert hasattr(campanella, name), name
+    for name in ["PropagatorTwoBody", "PropagatorNbody", "PropagatorNbodySrp", "PropagatorGve",
+                 "add_j2000"]:
+        assert not hasattr(campanella, name), name

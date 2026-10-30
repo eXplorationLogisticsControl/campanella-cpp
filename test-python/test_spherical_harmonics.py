@@ -12,32 +12,11 @@ $SPICE/pck/earth_latest_high_prec.bpc (ITRF93).
 
 import math
 import os
-import sys
 
 import numpy as np
 import pytest
 
-if sys.platform == "win32":
-    load_dir = "build/Release"
-else:
-    load_dir = "build/lib"
-
-sys.path.append(
-    os.path.join(
-        os.path.dirname(os.path.realpath(__file__)),
-        "..", load_dir
-    )
-)
-
-import campanella
-
-
-def furnsh_kernels():
-    spice_dir = os.environ["SPICE"]
-    for kernel in ["lsk/naif0012.tls", "spk/de440.bsp",
-                   "pck/moon_pa_de440_200625.bpc", "fk/moon_de440_250416.tf",
-                   "pck/earth_latest_high_prec.bpc"]:
-        campanella.furnsh(os.path.join(spice_dir, kernel))
+from helpers import campanella, final_row, furnsh_kernels, row_normalised_error
 
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), "data")
@@ -59,21 +38,6 @@ def relerr(a, b):
     a = np.asarray(a, dtype=float)
     b = np.asarray(b, dtype=float)
     return np.max(np.abs(a - b)) / np.max(np.abs(b))
-
-
-def row_normalised_error(M, M_ref):
-    """max over rows of max_j |M_ij - Mref_ij| / max_j |Mref_ij|"""
-    return np.max(np.abs(M - M_ref).max(axis=1) / np.abs(M_ref).max(axis=1))
-
-
-def final_row(traj, tf):
-    """Final row of a trajectory, checking that the integration reached tf"""
-    assert traj[-1][0] == tf, f"integration stopped at t = {traj[-1][0]}"
-    return np.array(traj[-1][1:])
-
-
-def stm_y0(x0):
-    return list(x0) + list(np.eye(6).ravel())
 
 
 # ----------------------------------------------------------------- parsers
@@ -214,15 +178,15 @@ def test_bf_reference_values(path, r_bf, U_ref, a_ref, G_ref):
 
 
 def test_bf_scaling():
-    """Canonical units: a scales with LU/TU^2 and G with 1/TU^2 (mu = GM TU^2/LU^3, R = R/LU)"""
-    LU, TU = 100000.0, 451624.90737307334
+    """Canonical units: a scales with DU/TU^2 and G with 1/TU^2 (mu = GM TU^2/DU^3, R = R/DU)"""
+    DU, TU = 100000.0, 451624.90737307334
     r = [1200.0, -900.0, 1100.0]
     U, a, G = campanella.sh_accel_bf(MOON_FILE, 10, r)
-    Uc, ac, Gc = campanella.sh_accel_bf(MOON_FILE, 10, list(np.array(r) / LU),
-                                        mu=GM_MOON_FILE * TU**2 / LU**3, R=R_MOON / LU)
-    assert relerr(np.array(ac) * LU / TU**2, a) <= 1e-14
+    Uc, ac, Gc = campanella.sh_accel_bf(MOON_FILE, 10, list(np.array(r) / DU),
+                                        mu=GM_MOON_FILE * TU**2 / DU**3, R=R_MOON / DU)
+    assert relerr(np.array(ac) * DU / TU**2, a) <= 1e-14
     assert relerr(np.array(Gc) / TU**2, G) <= 1e-14
-    assert abs(Uc * LU**2 / TU**2 - U) <= 1e-14 * abs(U)
+    assert abs(Uc * DU**2 / TU**2 - U) <= 1e-14 * abs(U)
 
 
 def test_inside_reference_sphere():
@@ -314,7 +278,7 @@ INERTIAL_CASES = {
         G=[-6.145239976757624e-10, 8.102712981787004e-10, -3.3654856452129834e-10, 8.102712981787004e-10,
            3.0516681002086997e-10, -1.678507351992034e-10, -3.365485645212984e-10, -1.6785073519920343e-10,
            3.093571876548927e-10],
-        LU=100000.0, TU=100000.0 / np.sqrt(MU_MOON / 100000.0),
+        DU=100000.0, TU=100000.0 / np.sqrt(MU_MOON / 100000.0),
         a_canon=[0.7337339291431145, -0.35872499292057164, -0.23921371552384216],
         G_canon=[-125.34142218906241, 165.26703148585858, -68.64414713230421, 165.2670314858586,
                  62.2433657881279, -34.23568476563924, -68.64414713230423, -34.23568476563925,
@@ -328,7 +292,7 @@ INERTIAL_CASES = {
         G=[-4.768823216360781e-09, 5.458236665744668e-09, -6.549457558444116e-10, 5.458236665744668e-09,
            -1.6465529837702443e-09, 5.166043093092149e-10, -6.549457558444117e-10, 5.166043093092149e-10,
            6.415376200131039e-09],
-        LU=R_EARTH, TU=np.sqrt(R_EARTH**3 / MU_EARTH),
+        DU=R_EARTH, TU=np.sqrt(R_EARTH**3 / MU_EARTH),
         a_canon=[0.0009723502566887701, -0.0007380280883223141, -0.0006512466921089657],
         G_canon=[-0.0031042367905091796, 0.003553006328894893, -0.00042633300058281124, 0.0035530063288948927,
                  -0.0010718137615599896, 0.00033628046801807145, -0.00042633300058281135,
@@ -345,9 +309,9 @@ def test_inertial_reference_values(body):
     print(f"{body}: a {relerr(a, c['a']):.1e}, G {relerr(G, c['G']):.1e}")
     assert relerr(a, c["a"]) <= c["rtol"]
     assert relerr(G, c["G"]) <= c["rtol"]
-    LU, TU = c["LU"], c["TU"]
+    DU, TU = c["DU"], c["TU"]
     a_c, G_c = campanella.sh_accel_inertial(c["path"], 10, "J2000", c["frame_bf"], ET0,
-                                            list(np.array(c["r"]) / LU), LU=LU, TU=TU)
+                                            list(np.array(c["r"]) / DU), DU=DU, TU=TU)
     print(f"{body} canonical: a {relerr(a_c, c['a_canon']):.1e}, G {relerr(G_c, c['G_canon']):.1e}")
     assert relerr(a_c, c["a_canon"]) <= c["rtol"]
     assert relerr(G_c, c["G_canon"]) <= c["rtol"]
@@ -387,24 +351,22 @@ def test_inertial_errors():
 # Low lunar orbit: r = 1838 km (100 km altitude), circular, i = 60 deg in J2000; period ~ 2 h
 GM_LIST = [MU_MOON, 398600.432896939, 132712197035.766]
 BODIES = ["MOON", "EARTH", "SUN"]
-SRP_ARGS = dict(A=34.675, m=1850.0, rhoS=0.9, rhoD=0.0)
-NO_SRP_ARGS = dict(A=0.0, m=1850.0, rhoS=0.9, rhoD=0.0)
+SRP = dict(include_srp=True, srp_A=34.675, srp_m=1850.0, srp_rhoS=0.9, srp_rhoD=0.0)
 R_LLO = 1838.0
 V_LLO = math.sqrt(MU_MOON / R_LLO)
 INC = math.radians(60.0)
 STATE_LLO = [R_LLO, 0.0, 0.0, 0.0, V_LLO * math.cos(INC), V_LLO * math.sin(INC)]
-SH_MOON = dict(sh_file=MOON_FILE, sh_nmax=10, frame_bf="MOON_PA")
+SH_MOON = dict(sh_file=MOON_FILE, sh_nmax=10, sh_frame="MOON_PA")
 TF_LLO = 6 * 3600.0
 
 
-def moon_prop(cls, sh=True, srp=False, LU=1.0, TU=1.0, gm=GM_LIST):
-    args = {}
-    if cls is campanella.PropagatorNbodySrp:
-        args = SRP_ARGS
-    elif cls is campanella.PropagatorGve:
-        args = SRP_ARGS if srp else NO_SRP_ARGS
-    return cls(GM=gm, BODIES=BODIES, frame="J2000", LU=LU, TU=TU,
-               **args, **(SH_MOON if sh else {}))
+def moon_params(sh=True, srp=False, **kw):
+    return campanella.SpiceParameters(ET0, BODIES, GMs=GM_LIST, **(SRP if srp else {}),
+                                      **(SH_MOON if sh else {}), **kw)
+
+
+def as_tuple(res):
+    return (res.t.tolist(), res.x.tolist(), None if res.stm is None else res.stm.tolist())
 
 
 def test_sh_off_reproduces_existing_results():
@@ -413,20 +375,20 @@ def test_sh_off_reproduces_existing_results():
     STATE0 = [-7505.7613773288285, 44128.19419987408, -55792.327508873765,
               0.07193326412942684, 0.018407794390508374, 0.004868437733535174]
     tspan = [0.0, 20 * 86400.0]
-    off = dict(sh_file="", sh_nmax=0, sh_mmax=-1, frame_bf="")
-    for cls, args in [(campanella.PropagatorNbody, {}), (campanella.PropagatorNbodySrp, SRP_ARGS),
-                      (campanella.PropagatorGve, SRP_ARGS)]:
-        p0 = cls(GM=GM_LIST, BODIES=BODIES, frame="J2000", LU=1.0, TU=1.0, **args)
-        p1 = cls(GM=GM_LIST, BODIES=BODIES, frame="J2000", LU=1.0, TU=1.0, **args, **off)
-        x0 = STATE0 if cls is not campanella.PropagatorGve else campanella.cart2mee(STATE0, MU_MOON)
-        assert p0.solve_ivp(ET0, tspan, x0) == p1.solve_ivp(ET0, tspan, x0)
-        if hasattr(p0, "solve_ivp_stm"):
-            assert p0.solve_ivp_stm(ET0, tspan, stm_y0(x0)) == p1.solve_ivp_stm(ET0, tspan, stm_y0(x0))
-        if cls is campanella.PropagatorGve:
-            assert p0.eval_jacobian(ET0, 0.0, x0) == p1.eval_jacobian(ET0, 0.0, x0)
-    # and the existing reference value (examples/solve_NbodySTM.cpp, test_gve.py)
-    xf = final_row(campanella.PropagatorNbody(GM=GM_LIST, BODIES=BODIES, frame="J2000", LU=1.0, TU=1.0,
-                                              **off).solve_ivp(ET0, tspan, STATE0), tspan[1])
+    off = dict(sh_file="", sh_nmax=0, sh_mmax=-1, sh_frame="")
+    for srp in [False, True]:
+        p0 = moon_params(sh=False, srp=srp)
+        p1 = moon_params(sh=False, srp=srp, **off)
+        assert not p1.include_spherical_harmonics
+        m0 = campanella.cart2mee(STATE0, MU_MOON)
+        for solve, x0 in [(campanella.solve_ivp_rv, STATE0), (campanella.solve_ivpstm_rv, STATE0),
+                          (campanella.solve_ivp_mee, m0), (campanella.solve_ivpstm_mee, m0)]:
+            assert as_tuple(solve(p0, tspan, x0)) == as_tuple(solve(p1, tspan, x0))
+        for ev, x0 in [(campanella.eval_rv, STATE0), (campanella.eval_mee, m0)]:
+            for u, v in zip(ev(p0, 0.0, x0), ev(p1, 0.0, x0)):
+                np.testing.assert_array_equal(u, v)
+    # and the existing reference value (examples/solve_rv.cpp, test_mee.py)
+    xf = final_row(campanella.solve_ivp_rv(moon_params(sh=False, **off), tspan, STATE0), tspan[1])
     np.testing.assert_allclose(xf, [10171.343017143072, 33674.15294325228, -60877.5267967639,
                                     0.013967106146233203, -0.0805131196626756, 0.0033270015062299776],
                                rtol=1e-12)
@@ -434,53 +396,59 @@ def test_sh_off_reproduces_existing_results():
 
 def test_sh_argument_errors():
     furnsh_kernels()
-    x0 = STATE_LLO
-    # GM[0] must match the GM of the file (here: Earth field around the Moon)
-    prop = campanella.PropagatorNbody(GM=GM_LIST, BODIES=BODIES, frame="J2000", LU=1.0, TU=1.0,
-                                      sh_file=EARTH_FILE, sh_nmax=10, frame_bf="ITRF93")
+    # GMs[0] must match the GM of the file (here: Earth field around the Moon)
     with pytest.raises(ValueError, match="GM"):
-        prop.solve_ivp(ET0, [0.0, 60.0], x0)
-    # unscaled GM[0] in canonical units
-    prop = moon_prop(campanella.PropagatorNbody, LU=100000.0, TU=451624.90737307334)
+        campanella.SpiceParameters(ET0, BODIES, GMs=GM_LIST, sh_file=EARTH_FILE, sh_nmax=10,
+                                   sh_frame="ITRF93")
+    # GMs are in km^3/s^2 also in canonical units: scaled GMs are wrong for the point mass and the field
     with pytest.raises(ValueError, match="GM"):
-        prop.solve_ivp(ET0, [0.0, 1e-4], list(np.array(x0) / 1e5))
-    prop = campanella.PropagatorNbody(GM=GM_LIST, BODIES=BODIES, frame="J2000", LU=1.0, TU=1.0,
-                                      sh_file=MOON_FILE, sh_nmax=0, frame_bf="MOON_PA")
+        campanella.SpiceParameters(ET0, BODIES, GMs=[g / MU_MOON for g in GM_LIST], DU=1e5, **SH_MOON)
     with pytest.raises(ValueError, match="sh_nmax"):
-        prop.solve_ivp(ET0, [0.0, 60.0], x0)
-    prop = campanella.PropagatorNbody(GM=GM_LIST, BODIES=BODIES, frame="J2000", LU=1.0, TU=1.0,
-                                      sh_file=MOON_FILE, sh_nmax=10)
-    with pytest.raises(ValueError, match="frame_bf"):
-        prop.solve_ivp(ET0, [0.0, 60.0], x0)
-    gve = campanella.PropagatorGve(GM=GM_LIST, BODIES=BODIES, frame="J2000", LU=1.0, TU=1.0,
-                                   **NO_SRP_ARGS, sh_file=MOON_FILE, sh_nmax=10, frame_bf="NOT_A_FRAME")
-    with pytest.raises(RuntimeError, match="NOT_A_FRAME"):
-        gve.eval_jacobian(ET0, 0.0, campanella.cart2mee(x0, MU_MOON))
+        campanella.SpiceParameters(ET0, BODIES, GMs=GM_LIST, sh_file=MOON_FILE, sh_nmax=0,
+                                   sh_frame="MOON_PA")
+    with pytest.raises(ValueError, match="sh_frame"):
+        campanella.SpiceParameters(ET0, BODIES, GMs=GM_LIST, sh_file=MOON_FILE, sh_nmax=10)
+    with pytest.raises(RuntimeError):
+        campanella.SpiceParameters(ET0, BODIES, GMs=GM_LIST, sh_file="/nonexistent.tab", sh_nmax=10,
+                                   sh_frame="MOON_PA")
+    # an unknown body-fixed frame is rejected at construction
+    with pytest.raises(ValueError, match="NOT_A_FRAME"):
+        campanella.SpiceParameters(ET0, BODIES, GMs=GM_LIST, sh_file=MOON_FILE, sh_nmax=10,
+                                   sh_frame="NOT_A_FRAME")
+    # a known frame whose orientation data is missing (IAU_PLUTO needs a PCK): SPICE error at the
+    # first evaluation, with NAIF's message
+    params = campanella.SpiceParameters(ET0, BODIES, GMs=GM_LIST, sh_file=MOON_FILE, sh_nmax=10,
+                                        sh_frame="IAU_PLUTO")
+    with pytest.raises(RuntimeError, match="SPICE"):
+        campanella.eval_mee(params, 0.0, campanella.cart2mee(STATE_LLO, MU_MOON))
+    with pytest.raises(RuntimeError, match="SPICE"):
+        campanella.solve_ivp_rv(params, [0.0, 60.0], STATE_LLO)
 
 
 def test_sh_effect_on_llo():
     """The SH field moves a 100 km lunar orbit by kilometres in 6 h; SRP adds on top of it"""
     furnsh_kernels()
     tspan = [0.0, TF_LLO]
-    xf_sh = final_row(moon_prop(campanella.PropagatorNbody).solve_ivp(ET0, tspan, STATE_LLO), TF_LLO)
-    xf_pm = final_row(moon_prop(campanella.PropagatorNbody, sh=False).solve_ivp(ET0, tspan, STATE_LLO), TF_LLO)
+    xf_sh = final_row(campanella.solve_ivp_rv(moon_params(), tspan, STATE_LLO), TF_LLO)
+    xf_pm = final_row(campanella.solve_ivp_rv(moon_params(sh=False), tspan, STATE_LLO), TF_LLO)
     dr = np.linalg.norm(xf_sh[:3] - xf_pm[:3])
     print(f"SH effect after 6 h: {dr:.3f} km")
     assert 0.1 < dr < 100.0
-    xf_srp = final_row(moon_prop(campanella.PropagatorNbodySrp).solve_ivp(ET0, tspan, STATE_LLO), TF_LLO)
+    xf_srp = final_row(campanella.solve_ivp_rv(moon_params(srp=True), tspan, STATE_LLO), TF_LLO)
     dr_srp = np.linalg.norm(xf_srp[:3] - xf_sh[:3])
     print(f"SRP effect on top of SH after 6 h: {dr_srp:.3e} km")
     assert 0.0 < dr_srp < 1.0
 
 
-def test_cartesian_stm_vs_fd_sh():
-    """Cartesian STM with SH (Uxx += G_sh) vs central differences of solve_ivp"""
+@pytest.mark.parametrize("srp", [False, True])
+def test_cartesian_stm_vs_fd_sh(srp):
+    """Cartesian STM with SH (G += G_sh), and SRP (G += G_srp), vs central differences"""
     furnsh_kernels()
-    prop = moon_prop(campanella.PropagatorNbody)
+    params = moon_params(srp=srp)
     tspan = [0.0, TF_LLO]
-    yf = final_row(prop.solve_ivp_stm(ET0, tspan, stm_y0(STATE_LLO)), TF_LLO)
+    yf = final_row(campanella.solve_ivpstm_rv(params, tspan, STATE_LLO), TF_LLO)
     Phi = yf[6:].reshape(6, 6)
-    xf = final_row(prop.solve_ivp(ET0, tspan, STATE_LLO), TF_LLO)
+    xf = final_row(campanella.solve_ivp_rv(params, tspan, STATE_LLO), TF_LLO)
     assert np.max(np.abs(yf[:3] - xf[:3])) <= 1e-6
 
     steps = [1e-3, 1e-3, 1e-3, 1e-6, 1e-6, 1e-6]
@@ -489,17 +457,17 @@ def test_cartesian_stm_vs_fd_sh():
         xp, xm = np.array(STATE_LLO), np.array(STATE_LLO)
         xp[j] += steps[j]
         xm[j] -= steps[j]
-        Phi_fd[:, j] = (final_row(prop.solve_ivp(ET0, tspan, list(xp)), TF_LLO)
-                        - final_row(prop.solve_ivp(ET0, tspan, list(xm)), TF_LLO)) / (2 * steps[j])
+        Phi_fd[:, j] = (final_row(campanella.solve_ivp_rv(params, tspan, list(xp)), TF_LLO)
+                        - final_row(campanella.solve_ivp_rv(params, tspan, list(xm)), TF_LLO)) / (2 * steps[j])
     # compare in scaled units so that the position and velocity blocks weigh alike
     D = np.diag([R_LLO] * 3 + [V_LLO] * 3)
     Dinv = np.linalg.inv(D)
     err = row_normalised_error(Dinv @ Phi @ D, Dinv @ Phi_fd @ D)
     # the point-mass STM differs from the SH STM by much more than the tolerance
-    Phi_pm = final_row(moon_prop(campanella.PropagatorNbody, sh=False).solve_ivp_stm(
-        ET0, tspan, stm_y0(STATE_LLO)), TF_LLO)[6:].reshape(6, 6)
+    Phi_pm = final_row(campanella.solve_ivpstm_rv(moon_params(sh=False), tspan, STATE_LLO),
+                       TF_LLO)[6:].reshape(6, 6)
     err_pm = row_normalised_error(Dinv @ Phi_pm @ D, Dinv @ Phi_fd @ D)
-    print(f"Cartesian STM with SH vs FD: {err:.3e} (point-mass STM vs FD: {err_pm:.3e})")
+    print(f"Cartesian STM with SH (srp={srp}) vs FD: {err:.3e} (point-mass STM vs FD: {err_pm:.3e})")
     assert err <= 1e-6
     assert err_pm > 100 * err
 
@@ -510,12 +478,12 @@ def _mee_fd_steps(x0):
 
 @pytest.mark.parametrize("srp", [False, True])
 def test_gve_stm_vs_fd_sh(srp):
-    """GVE STM with SH (G += G_sh) vs central differences of solve_ivp"""
+    """GVE STM with SH (G += G_sh) vs central differences of solve_ivp_mee"""
     furnsh_kernels()
-    prop = moon_prop(campanella.PropagatorGve, srp=srp)
+    params = moon_params(srp=srp)
     x0 = np.array(campanella.cart2mee(STATE_LLO, MU_MOON))
     tspan = [0.0, TF_LLO]
-    yf = final_row(prop.solve_ivp_stm(ET0, tspan, stm_y0(x0)), TF_LLO)
+    yf = final_row(campanella.solve_ivpstm_mee(params, tspan, list(x0)), TF_LLO)
     Phi = yf[6:].reshape(6, 6)
     steps = _mee_fd_steps(x0)
     Phi_fd = np.zeros((6, 6))
@@ -523,8 +491,8 @@ def test_gve_stm_vs_fd_sh(srp):
         xp, xm = x0.copy(), x0.copy()
         xp[j] += steps[j]
         xm[j] -= steps[j]
-        Phi_fd[:, j] = (final_row(prop.solve_ivp(ET0, tspan, list(xp)), TF_LLO)
-                        - final_row(prop.solve_ivp(ET0, tspan, list(xm)), TF_LLO)) / (2 * steps[j])
+        Phi_fd[:, j] = (final_row(campanella.solve_ivp_mee(params, tspan, list(xp)), TF_LLO)
+                        - final_row(campanella.solve_ivp_mee(params, tspan, list(xm)), TF_LLO)) / (2 * steps[j])
     D = np.diag([x0[0], 1, 1, 1, 1, 1])
     err = row_normalised_error(np.linalg.inv(D) @ Phi @ D, np.linalg.inv(D) @ Phi_fd @ D)
     print(f"GVE STM with SH (srp={srp}) vs FD: {err:.3e}")
@@ -534,63 +502,77 @@ def test_gve_stm_vs_fd_sh(srp):
 @pytest.mark.parametrize("t", [0.0, 3600.0])
 def test_gve_jacobian_vs_fd_sh(t):
     furnsh_kernels()
-    prop = moon_prop(campanella.PropagatorGve, srp=True)
+    params = moon_params(srp=True)
     x = np.array(campanella.cart2mee(STATE_LLO, MU_MOON))
-    _, A = prop.eval_jacobian(ET0, t, list(x))
-    A = np.array(A).reshape(6, 6)
+    _, A = campanella.eval_mee(params, t, list(x))
     steps = _mee_fd_steps(x)
     A_fd = np.zeros((6, 6))
     for m in range(6):
         xp, xm = x.copy(), x.copy()
         xp[m] += steps[m]
         xm[m] -= steps[m]
-        A_fd[:, m] = (np.array(prop.eval_jacobian(ET0, t, list(xp))[0])
-                      - np.array(prop.eval_jacobian(ET0, t, list(xm))[0])) / (2 * steps[m])
+        A_fd[:, m] = (campanella.eval_mee(params, t, list(xp))[0]
+                      - campanella.eval_mee(params, t, list(xm))[0]) / (2 * steps[m])
     scale = np.diag([x[0], 1, 1, 1, 1, 1])
     err = row_normalised_error(A @ scale, A_fd @ scale)
     print(f"GVE Jacobian with SH, t = {t}: {err:.3e}")
     assert err <= 1e-6
 
 
+@pytest.mark.parametrize("t", [0.0, 3600.0])
+def test_rv_jacobian_vs_fd_sh(t):
+    """eval_rv with SH and SRP: G block against central differences of eom_rv"""
+    furnsh_kernels()
+    params = moon_params(srp=True)
+    x = np.array(STATE_LLO)
+    _, A = campanella.eval_rv(params, t, list(x))
+    G_fd = np.zeros((3, 3))
+    for m in range(3):
+        dx = np.zeros(6)
+        dx[m] = 1e-3
+        G_fd[:, m] = (campanella.eom_rv(params, t, list(x + dx))[3:]
+                      - campanella.eom_rv(params, t, list(x - dx))[3:]) / 2e-3
+    err = np.max(np.abs(A[3:, :3] - G_fd)) / np.max(np.abs(G_fd))
+    print(f"Cartesian Jacobian with SH, t = {t}: {err:.3e}")
+    assert err <= 1e-7
+
+
 @pytest.mark.parametrize("srp", [False, True])
 def test_gve_vs_cartesian_sh(srp):
     """GVE and Cartesian propagators see the same SH acceleration"""
     furnsh_kernels()
+    params = moon_params(srp=srp)
     tspan = [0.0, TF_LLO]
     x0 = campanella.cart2mee(STATE_LLO, MU_MOON)
-    xf = final_row(moon_prop(campanella.PropagatorGve, srp=srp).solve_ivp(ET0, tspan, x0), TF_LLO)
-    cls = campanella.PropagatorNbodySrp if srp else campanella.PropagatorNbody
-    rv_f = final_row(moon_prop(cls).solve_ivp(ET0, tspan, STATE_LLO), TF_LLO)
-    rv_gve = np.array(campanella.mee2cart(list(xf), MU_MOON))
-    dr = np.linalg.norm(rv_gve[:3] - rv_f[:3])
-    dv = np.linalg.norm(rv_gve[3:] - rv_f[3:])
-    print(f"GVE vs Cartesian with SH (srp={srp}): |dr| = {dr:.3e} km, |dv| = {dv:.3e} km/s")
+    xf = final_row(campanella.solve_ivp_mee(params, tspan, x0), TF_LLO)
+    rv_f = final_row(campanella.solve_ivp_rv(params, tspan, STATE_LLO), TF_LLO)
+    rv_mee = np.array(campanella.mee2cart(list(xf), MU_MOON))
+    dr = np.linalg.norm(rv_mee[:3] - rv_f[:3])
+    dv = np.linalg.norm(rv_mee[3:] - rv_f[3:])
+    print(f"MEE vs Cartesian with SH (srp={srp}): |dr| = {dr:.3e} km, |dv| = {dv:.3e} km/s")
     assert dr <= 1e-6 and dv <= 1e-9
 
 
 def test_canonical_units_sh():
     """1-day low lunar orbit with SH in km/s and in canonical units (test_canonical_moon.py scales)"""
     furnsh_kernels()
-    LU = 100000.0
-    VU = np.sqrt(MU_MOON / LU)
-    TU = LU / VU
-    gm_canon = [gm / MU_MOON for gm in GM_LIST]
+    km = moon_params()
+    canon = moon_params(DU=100000.0)
+    DU, VU, TU = canon.DU, canon.VU, canon.TU
     tf = 86400.0
-    D = np.diag([LU] * 3 + [VU] * 3)
+    D = np.diag([DU] * 3 + [VU] * 3)
     x0_canon = np.array(STATE_LLO) / np.diag(D)
-    xf_km = final_row(moon_prop(campanella.PropagatorNbody).solve_ivp(ET0, [0.0, tf], STATE_LLO), tf)
-    canon = moon_prop(campanella.PropagatorNbody, LU=LU, TU=TU, gm=gm_canon)
-    xf = D @ final_row(canon.solve_ivp(ET0, [0.0, tf / TU], list(x0_canon)), tf / TU)
+    xf_km = final_row(campanella.solve_ivp_rv(km, [0.0, tf], STATE_LLO), tf)
+    xf = D @ final_row(campanella.solve_ivp_rv(canon, [0.0, tf / TU], list(x0_canon)), tf / TU)
     dr = np.linalg.norm(xf[:3] - xf_km[:3])
     dv = np.linalg.norm(xf[3:] - xf_km[3:])
     print(f"canonical vs km/s with SH: |dr| = {dr:.3e} km, |dv| = {dv:.3e} km/s")
     assert dr <= 1e-4 and dv <= 1e-7
 
     # GVE in canonical units
-    gve_km = moon_prop(campanella.PropagatorGve)
-    gve = moon_prop(campanella.PropagatorGve, LU=LU, TU=TU, gm=gm_canon)
-    m_km = final_row(gve_km.solve_ivp(ET0, [0.0, tf], campanella.cart2mee(STATE_LLO, MU_MOON)), tf)
-    m_c = final_row(gve.solve_ivp(ET0, [0.0, tf / TU], campanella.cart2mee(list(x0_canon), 1.0)), tf / TU)
+    m_km = final_row(campanella.solve_ivp_mee(km, [0.0, tf], campanella.cart2mee(STATE_LLO, MU_MOON)), tf)
+    m_c = final_row(campanella.solve_ivp_mee(canon, [0.0, tf / TU], campanella.cart2mee(list(x0_canon), 1.0)),
+                    tf / TU)
     rv_km = np.array(campanella.mee2cart(list(m_km), MU_MOON))
     rv_c = D @ np.array(campanella.mee2cart(list(m_c), 1.0))
     print(f"GVE canonical vs km/s with SH: |dr| = {np.linalg.norm(rv_c[:3] - rv_km[:3]):.3e} km")
@@ -602,22 +584,21 @@ def test_earth_leo_sh():
     furnsh_kernels()
     gm = [GM_EARTH_FILE, MU_MOON, 132712197035.766]
     bodies = ["EARTH", "MOON", "SUN"]
-    sh = dict(sh_file=EARTH_FILE, sh_nmax=10, frame_bf="ITRF93")
+    sh = dict(sh_file=EARTH_FILE, sh_nmax=10, sh_frame="ITRF93")
     rv0 = [-2103.7154800484846, 3643.742096113127, 5308.456731666615,
            -6.647330004445163, -3.833624329580397, 0.004603821856452162]
     tf = 3 * 3600.0
-    cart = campanella.PropagatorNbody(GM=gm, BODIES=bodies, frame="J2000", LU=1.0, TU=1.0, **sh)
-    gve = campanella.PropagatorGve(GM=gm, BODIES=bodies, frame="J2000", LU=1.0, TU=1.0, **NO_SRP_ARGS, **sh)
-    rv_f = final_row(cart.solve_ivp(ET0, [0.0, tf], rv0), tf)
+    params = campanella.SpiceParameters(ET0, bodies, GMs=gm, **sh)
+    rv_f = final_row(campanella.solve_ivp_rv(params, [0.0, tf], rv0), tf)
     x0 = np.array(campanella.cart2mee(rv0, gm[0]))
-    yf = final_row(gve.solve_ivp_stm(ET0, [0.0, tf], stm_y0(x0)), tf)
-    rv_gve = np.array(campanella.mee2cart(list(yf[:6]), gm[0]))
-    dr = np.linalg.norm(rv_gve[:3] - rv_f[:3])
+    yf = final_row(campanella.solve_ivpstm_mee(params, [0.0, tf], list(x0)), tf)
+    rv_mee = np.array(campanella.mee2cart(list(yf[:6]), gm[0]))
+    dr = np.linalg.norm(rv_mee[:3] - rv_f[:3])
     print(f"Earth LEO, GVE vs Cartesian with SH: |dr| = {dr:.3e} km")
     assert dr <= 1e-6
     # J2 dominates: the point-mass orbit is kilometres away
-    rv_pm = final_row(campanella.PropagatorNbody(GM=gm, BODIES=bodies, frame="J2000", LU=1.0, TU=1.0)
-                      .solve_ivp(ET0, [0.0, tf], rv0), tf)
+    rv_pm = final_row(campanella.solve_ivp_rv(campanella.SpiceParameters(ET0, bodies, GMs=gm),
+                                              [0.0, tf], rv0), tf)
     assert np.linalg.norm(rv_pm[:3] - rv_f[:3]) > 1.0
 
     Phi = yf[6:].reshape(6, 6)
@@ -627,13 +608,12 @@ def test_earth_leo_sh():
         xp, xm = x0.copy(), x0.copy()
         xp[j] += steps[j]
         xm[j] -= steps[j]
-        Phi_fd[:, j] = (final_row(gve.solve_ivp(ET0, [0.0, tf], list(xp)), tf)
-                        - final_row(gve.solve_ivp(ET0, [0.0, tf], list(xm)), tf)) / (2 * steps[j])
+        Phi_fd[:, j] = (final_row(campanella.solve_ivp_mee(params, [0.0, tf], list(xp)), tf)
+                        - final_row(campanella.solve_ivp_mee(params, [0.0, tf], list(xm)), tf)) / (2 * steps[j])
     D = np.diag([x0[0], 1, 1, 1, 1, 1])
     err = row_normalised_error(np.linalg.inv(D) @ Phi @ D, np.linalg.inv(D) @ Phi_fd @ D)
     print(f"Earth LEO, GVE STM with SH vs FD: {err:.3e}")
     assert err <= 1e-6
-
 
 
 # ----------------------------------------------------------------- review fixes: domain, parsers, arguments
@@ -649,34 +629,32 @@ def test_below_reference_radius_raises():
     furnsh_kernels()
     x0 = _low_periapsis_state()
     tspan = [0.0, 20000.0]
-    for cls in [campanella.PropagatorNbody, campanella.PropagatorNbodySrp]:
-        with pytest.raises(ValueError, match="sh_rho_min"):
-            moon_prop(cls).solve_ivp(ET0, tspan, x0)
-    with pytest.raises(ValueError, match="sh_rho_min"):
-        moon_prop(campanella.PropagatorNbody).solve_ivp_stm(ET0, tspan, stm_y0(x0))
     m0 = campanella.cart2mee(x0, MU_MOON)
-    gve = moon_prop(campanella.PropagatorGve)
-    with pytest.raises(ValueError, match="sh_rho_min"):
-        gve.solve_ivp(ET0, tspan, m0)
-    with pytest.raises(ValueError, match="sh_rho_min"):
-        gve.solve_ivp_stm(ET0, tspan, stm_y0(m0))
+    for srp in [False, True]:
+        params = moon_params(srp=srp)
+        for solve, y0 in [(campanella.solve_ivp_rv, x0), (campanella.solve_ivpstm_rv, x0),
+                          (campanella.solve_ivp_mee, m0), (campanella.solve_ivpstm_mee, m0)]:
+            with pytest.raises(ValueError, match="sh_rho_min"):
+                solve(params, tspan, y0)
     # at periapsis (L + pi) the position is below R
     m_peri = list(m0)
     m_peri[5] += math.pi
     with pytest.raises(ValueError, match="sh_rho_min"):
-        gve.eval_jacobian(ET0, 0.0, m_peri)
+        campanella.eval_mee(moon_params(), 0.0, m_peri)
+    with pytest.raises(ValueError, match="sh_rho_min"):
+        campanella.eval_rv(moon_params(), 0.0, campanella.mee2cart(m_peri, MU_MOON))
     # without SH the same orbit still integrates to tf
-    final_row(moon_prop(campanella.PropagatorNbody, sh=False).solve_ivp(ET0, tspan, x0), tspan[1])
+    final_row(campanella.solve_ivp_rv(moon_params(sh=False), tspan, x0), tspan[1])
 
 
 def test_sh_rho_min_allows_low_arcs():
     furnsh_kernels()
     x0 = _low_periapsis_state()
     tspan = [0.0, 20000.0]
-    kw = dict(GM=GM_LIST, BODIES=BODIES, frame="J2000", LU=1.0, TU=1.0, **SH_MOON, sh_rho_min=0.99)
-    xf = final_row(campanella.PropagatorNbody(**kw).solve_ivp(ET0, tspan, x0), tspan[1])
+    params = moon_params(sh_rho_min=0.99)
+    xf = final_row(campanella.solve_ivp_rv(params, tspan, x0), tspan[1])
     m0 = campanella.cart2mee(x0, MU_MOON)
-    mf = final_row(campanella.PropagatorGve(**kw, **NO_SRP_ARGS).solve_ivp(ET0, tspan, m0), tspan[1])
+    mf = final_row(campanella.solve_ivp_mee(params, tspan, m0), tspan[1])
     rv = np.array(campanella.mee2cart(list(mf), MU_MOON))
     assert np.linalg.norm(rv[:3] - xf[:3]) <= 1e-6
     # standalone evaluators
@@ -687,9 +665,8 @@ def test_sh_rho_min_allows_low_arcs():
     campanella.sh_accel_inertial(MOON_FILE, 10, "J2000", "MOON_PA", ET0, r_low, rho_min=0.99)
     # sh_rho_min must be in (0, 1]
     for bad in [0.0, -1.0, 1.5]:
-        kw["sh_rho_min"] = bad
         with pytest.raises(ValueError, match="sh_rho_min"):
-            campanella.PropagatorNbody(**kw).solve_ivp(ET0, [0.0, 60.0], STATE_LLO)
+            moon_params(sh_rho_min=bad)
         with pytest.raises(ValueError):
             campanella.sh_accel_bf(MOON_FILE, 10, STATE_LLO[:3], rho_min=bad)
 
@@ -697,13 +674,13 @@ def test_sh_rho_min_allows_low_arcs():
 def test_rho_min_boundary_rounding():
     """A point built as unit vector * R (possibly 1 ulp inside) is accepted"""
     rng = np.random.default_rng(3)
-    LU = 100000.0
+    DU = 100000.0
     for _ in range(200):
         u = rng.normal(size=3)
         u /= np.linalg.norm(u)
         campanella.sh_accel_bf(MOON_FILE, 10, list(u * R_MOON))
-        campanella.sh_accel_bf(MOON_FILE, 10, list(u * (R_MOON / LU)),
-                               mu=GM_MOON_FILE, R=R_MOON / LU)
+        campanella.sh_accel_bf(MOON_FILE, 10, list(u * (R_MOON / DU)),
+                               mu=GM_MOON_FILE, R=R_MOON / DU)
         campanella.sh_accel_bf(MOON_FILE, 10, list(u * 0.99 * R_MOON), rho_min=0.99)
     with pytest.raises(ValueError):
         campanella.sh_accel_bf(MOON_FILE, 10, [0.0, 0.0, R_MOON * (1 - 1e-12)])
@@ -910,4 +887,5 @@ def test_shadr_rows_above_header_order_warn(tmp_path, capfd):
     assert "order above" not in capfd.readouterr().err
 
 if __name__ == "__main__":
+    import sys
     sys.exit(pytest.main([__file__, "-v", "-s"]))

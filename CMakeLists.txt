@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.14)
 include(FetchContent)
 
 project(campanella LANGUAGES CXX)
@@ -9,9 +9,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 option(CAMPANELLA_BUILD_PYTHON "Build the pybind11 module" ON)
 option(CAMPANELLA_BUILD_CPP "Build the shared C++ library" OFF)
-if(NOT CAMPANELLA_BUILD_PYTHON AND NOT CAMPANELLA_BUILD_CPP)
+option(CAMPANELLA_BUILD_TESTS "Build the GoogleTest suite (run with ctest)" OFF)
+if(NOT CAMPANELLA_BUILD_PYTHON AND NOT CAMPANELLA_BUILD_CPP AND NOT CAMPANELLA_BUILD_TESTS)
     message(FATAL_ERROR
-        "Nothing to build. Pass -DCAMPANELLA_BUILD_PYTHON=ON and/or -DCAMPANELLA_BUILD_CPP=ON.")
+        "Nothing to build. Pass -DCAMPANELLA_BUILD_PYTHON=ON, -DCAMPANELLA_BUILD_CPP=ON and/or -DCAMPANELLA_BUILD_TESTS=ON.")
 endif()
 
 # Find Python interpreter and development libraries first.
@@ -251,25 +252,22 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 # Solver sources, compiled once and linked into whichever product is enabled.
 add_library(campanella_core OBJECT
-    src/perturbations/spice_kernels.cpp
-    src/propagate/propagate_twobody.cpp
-    src/propagate/propagate_Nbody.cpp
-    src/propagate/propagate_NbodySRP.cpp
-    src/propagate/propagate_stm_Nbody.cpp
-    src/propagate/propagate_gve.cpp
-    src/propagate/propagate_stm_gve.cpp
-    src/eoms/eoms.cpp
-    src/eoms/eoms_stm.cpp
-    src/eoms/eoms_gve.cpp
+    src/api.cpp
+    src/spice_parameters.cpp
+    src/integrate.cpp
+    src/solve_ivp.cpp
+    src/eoms/forces.cpp
+    src/eoms/eoms_rv.cpp
+    src/eoms/eoms_mee.cpp
     src/eoms/mee.cpp
-    src/eoms/gravity_gradient_Nbody.cpp
+    src/eoms/gravity_gradient.cpp
     src/perturbations/thirdbody.cpp
     src/perturbations/SRP.cpp
     src/perturbations/spherical_harmonics.cpp)
 set_target_properties(campanella_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(campanella_core PUBLIC
-    "${CMAKE_CURRENT_SOURCE_DIR}/include"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_include_directories(campanella_core
+    PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(campanella_core PUBLIC
     ${GSL_TARGET}
     ${GSL_CBLAS_TARGET}
@@ -277,12 +275,10 @@ target_link_libraries(campanella_core PUBLIC
 add_dependencies(campanella_core gsl_external_build)
 
 if(CAMPANELLA_BUILD_CPP)
-    # $<TARGET_OBJECTS> keeps this working when cmake_minimum_required is 3.12.
+    # Built from the objects so that CSPICE and GSL are linked in, and hidden, here.
     # Do not also link campanella_core: that would add the same objects twice.
     add_library(campanella SHARED $<TARGET_OBJECTS:campanella_core>)
-    target_include_directories(campanella PUBLIC
-        "${CMAKE_CURRENT_SOURCE_DIR}/include"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_include_directories(campanella PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
     target_link_libraries(campanella PRIVATE
         ${GSL_TARGET}
         ${GSL_CBLAS_TARGET}
@@ -299,42 +295,19 @@ if(CAMPANELLA_BUILD_CPP)
             LINK_FLAGS " -Wl,-z,notext -Wl,--exclude-libs,ALL")
     endif()
 
-    add_executable(solve_twobody examples/solve_twobody.cpp)
-    target_link_libraries(solve_twobody PRIVATE campanella)
-    set_target_properties(solve_twobody PROPERTIES
-        BUILD_RPATH "$<TARGET_FILE_DIR:campanella>")
-
-    add_executable(solve_Nbody examples/solve_Nbody.cpp)
-    target_link_libraries(solve_Nbody PRIVATE campanella)
-    set_target_properties(solve_Nbody PROPERTIES
-        BUILD_RPATH "$<TARGET_FILE_DIR:campanella>")
-
-    add_executable(solve_NbodySTM examples/solve_NbodySTM.cpp)
-    target_link_libraries(solve_NbodySTM PRIVATE campanella)
-    set_target_properties(solve_NbodySTM PROPERTIES
-        BUILD_RPATH "$<TARGET_FILE_DIR:campanella>")
-
-    add_executable(solve_gve examples/solve_gve.cpp)
-    target_link_libraries(solve_gve PRIVATE campanella)
-    set_target_properties(solve_gve PROPERTIES
-        BUILD_RPATH "$<TARGET_FILE_DIR:campanella>")
-
-    add_executable(solve_moon_canonical examples/solve_moon_canonical.cpp)
-    target_link_libraries(solve_moon_canonical PRIVATE campanella)
-    set_target_properties(solve_moon_canonical PROPERTIES
-        BUILD_RPATH "$<TARGET_FILE_DIR:campanella>")
-
-    add_executable(solve_sh examples/solve_sh.cpp)
-    target_link_libraries(solve_sh PRIVATE campanella)
+    foreach(example solve_twobody solve_rv solve_mee solve_moon_canonical solve_sh)
+        add_executable(${example} examples/${example}.cpp)
+        target_link_libraries(${example} PRIVATE campanella)
+        set_target_properties(${example} PROPERTIES
+            BUILD_RPATH "$<TARGET_FILE_DIR:campanella>")
+    endforeach()
     # default gravity field: test-python/data/gggrx_1200a_sha_n10.tab
     target_compile_definitions(solve_sh PRIVATE CAMPANELLA_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
-    set_target_properties(solve_sh PROPERTIES
-        BUILD_RPATH "$<TARGET_FILE_DIR:campanella>")
 endif()
 
 if(CAMPANELLA_BUILD_PYTHON)
     add_library(campanella_python MODULE
-        src/campanella.cpp
+        src/bindings.cpp
         $<TARGET_OBJECTS:campanella_core>)
     set_target_properties(campanella_python PROPERTIES OUTPUT_NAME campanella)
     pybind11_extension(campanella_python)
@@ -348,4 +321,39 @@ if(CAMPANELLA_BUILD_PYTHON)
         cspice
         ${PYBIND11_TARGET}
     )
+endif()
+
+if(CAMPANELLA_BUILD_TESTS)
+    enable_testing()
+    FetchContent_Declare(
+        googletest
+        URL      https://github.com/google/googletest/archive/refs/tags/v1.15.2.tar.gz
+        URL_HASH SHA256=7b42b4d6ed48810c5362c265a17faebe90dc2373c885e5216439d37927f02926
+    )
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+    set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googletest)
+
+    # Link the objects, not libcampanella: the shared library hides its CSPICE, and the tests
+    # need the same CSPICE as the library (e.g. kclear_c).
+    add_executable(campanella_tests
+        tests/test_mee.cpp
+        tests/test_spice_parameters.cpp
+        tests/test_eoms.cpp
+        tests/test_solve_ivp.cpp
+        $<TARGET_OBJECTS:campanella_core>)
+    add_dependencies(campanella_tests gsl_external_build)
+    target_include_directories(campanella_tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    target_link_libraries(campanella_tests PRIVATE
+        ${GSL_TARGET}
+        ${GSL_CBLAS_TARGET}
+        cspice
+        GTest::gtest_main)
+    target_compile_definitions(campanella_tests PRIVATE CAMPANELLA_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    include(GoogleTest)
+    gtest_discover_tests(campanella_tests)
 endif()

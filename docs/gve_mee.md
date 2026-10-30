@@ -2,20 +2,22 @@
 
 This document specifies the MEE dynamics model and its 6x6 state-transition matrix (STM). It covers:
 - the conversions `mee2cart` and `cart2mee`
-- the Gauss variational equations (GVE) driven by the same perturbations as `eom_NBodySRP`
+- the Gauss variational equations (GVE) driven by the same perturbations as `eom_rv`
 - the analytic Jacobian used to propagate the STM
 
 Every formula below was checked numerically. Section 6 has the results. The physics must match
-`eom_NBodySRP` (`src/eoms/eoms.cpp`) exactly: the Moon (or another `BODIES[0]`) is the central body, the
-other bodies are third bodies via `compute_thirdbody_perturbation`, and SRP comes from `compute_SRP`.
+`eom_rv` exactly: both add the perturbations of `add_perturbations` (`src/eoms/forces.cpp`) to the
+central-body term. The first NAIF id (the Moon here) is the central body, the other ids are third bodies
+(`thirdbody_accel`), and SRP comes from `src/perturbations/SRP.cpp`. In the text below, `GM[i]` and
+`BODIES[i]` are `SpiceParameters.mus[i]` and `naif_ids[i]`.
 
 **Indexing.** All vectors and matrices are 0-based, as in C++.
 - State: `x[0..5] = [p, f, g, h, k, L]`.
 - RTN acceleration: `a_rtn[0..2] = [a_R, a_T, a_N]`.
 - `B[i][j]`: row `i` is the element, column `j` is the R/T/N component.
 
-**Name clash.** The Jacobian is called **A**, as in `Phi_dot = A Phi`. The spacecraft area (parameter `A` in
-`ParamsNbody` and `compute_SRP`) is written **S** in this document.
+**Name clash.** The Jacobian is called **A**, as in `Phi_dot = A Phi`. The spacecraft area (`srp_A` in
+`SpiceParameters`) is written **S** in this document.
 
 ---
 
@@ -28,7 +30,7 @@ In terms of the classical elements (a, e, i, Ω, ω, ν):
 
 | MEE | definition | range |
 |---|---|---|
-| p | a(1 − e²), the semi-latus rectum, in LU | p > 0 |
+| p | a(1 − e²), the semi-latus rectum, in DU | p > 0 |
 | f | e cos(ω + Ω) | |
 | g | e sin(ω + Ω) | |
 | h | tan(i/2) cos Ω | |
@@ -58,7 +60,7 @@ The names in brackets are the suggested C++ variable names. These are the only i
 | w_L [`wL`] | ∂w/∂L = −f sL + g cL | |
 | Z_L [`ZL`] | ∂Z/∂L = h cL + k sL | |
 
-μ = `GM[0]` in LU³/TU². The time t is in TU. The ephemeris epoch is et = et0 + t·TU, exactly as in `eom_NBodySRP`.
+μ = `mus[0]` in DU³/TU². The time t is in TU. The ephemeris epoch is et = et0 + t·TU, exactly as in `eom_rv`.
 
 ### 1.3 Equinoctial frame
 
@@ -112,7 +114,7 @@ Preconditions:
 - **p > 0 and w > 0.** w ≤ 0 can only occur for hyperbolic elements beyond the asymptote, where r would be negative.
   - `mee2cart` throws `std::domain_error`.
   - The EOM returns `GSL_EDOM`. Do not use `GSL_EBADFUNC`: `gsl_odeiv2_evolve_apply` aborts on it (and on `GSL_EFAULT`), whereas for any other nonzero status it halves the step and retries. An out-of-domain trial RK stage, e.g. a large first step near i = 180°, therefore only shrinks the step.
-  - `PropagatorGve.eval_jacobian` checks the domain explicitly and throws `std::domain_error`.
+  - `eval_mee` throws `std::domain_error` (`ValueError` in Python); the solvers throw it if the step cannot be shrunk any further.
 - **L is not wrapped.** Any real L is accepted.
 
 The angular momentum is H = r × v = √(μp) ŵ, so ŵ is always along H. This is why n̂ = ŵ in Section 3.
@@ -200,10 +202,10 @@ All derivatives with respect to p, f and g are zero.
 ```
 
 - a_I is the sum of all third-body accelerations and the SRP acceleration, in the inertial integration frame, evaluated at r_vec(x) and et = et0 + t·TU.
-- It is exactly the acceleration that `eom_NBodySRP` adds to the central term −μ r/r³:
+- It is exactly the acceleration that `eom_rv` adds to the central term −μ r/r³ (`add_perturbations`):
   ```
-  a_I = Σ_{i=1}^{N−1} compute_thirdbody_perturbation(r, GM[i], BODIES[i], et, ...)[0..2]
-        + compute_SRP(r, et, ...)[0..2]
+  a_I = Σ_{i=1}^{N−1} thirdbody_accel(r, s_i(et), GM[i])
+        + a_srp(r, et)
   ```
 - Only the position part of `mee2cart` is needed to evaluate it.
 
@@ -256,7 +258,7 @@ F     = (∂Cᵀ/∂x) a_I          (3x6, rotation of the RTN basis at fixed a_I
 - ∂/∂t terms do not enter: the STM is ∂x(t)/∂x(t₀) and the time dependence is explicit.
 - The velocity never appears.
 
-**STM layout.** Same as `eom_stm_NBody`:
+**STM layout.** Same as `eomstm_rv`:
 - y[0..5] = x.
 - y[6 + 6i + j] = Φ[i][j], row-major, with Φ(t₀) = I.
 - The derivative is:
@@ -345,7 +347,7 @@ G = Σ_{i=1}^{N−1} G_i  +  G_srp  +  G_sh ,      G_rtn = Cᵀ G C
 
 G_sh is present only when a central-body gravity field is given (see below).
 
-**Third body.** `compute_thirdbody_perturbation` evaluates Battin's form:
+**Third body.** `thirdbody_accel` evaluates Battin's form:
 - a_i = −μ_i (r + F(q_i) s_i)/‖d_i‖³, with d_i = r − s_i.
 - This is algebraically identical to −μ_i (d_i/‖d_i‖³ + s_i/‖s_i‖³).
 - The indirect term does not depend on r, so the exact gradient is:
@@ -355,24 +357,18 @@ G_i = μ_i ( 3 d_i d_iᵀ − ‖d_i‖² I₃ ) / ‖d_i‖⁵
 ```
 
 This is exactly `gravity_gradient_third_body(rvec, svec, GM[i], GG)`:
-- svec = {res[3], res[4], res[5]} from `compute_thirdbody_perturbation`, i.e. the body position already divided by LU.
-- This is the same call pattern as `eom_stm_NBody`.
+- svec is the body position already divided by DU, as passed to `thirdbody_accel`.
+- The Cartesian STM (`eomstm_rv`) uses the same gradient.
 
-**SRP.** `compute_SRP` computes:
-- d = r − s, where s = position of "SOLAR SYSTEM BARYCENTER" relative to `BODIES[0]`, divided by LU
-- R = ‖d‖ and R₀ = ‖s‖
-- P = P₀ (R₀/R)² / c
+**SRP.** `add_perturbations` (`src/eoms/forces.cpp`) computes, with the SRP constants of `src/perturbations/SRP.cpp`:
+- d = r − s, where s = position of the Sun (NAIF 10, which must be listed in `naif_ids`) relative to the central body, divided by DU; s = 0 if the Sun is the central body
+- R = ‖d‖
 - C_r = 1 + ρ_S + 5ρ_D/3
-- κ = P C_r S / (R m) / (1e3 · LU/TU²), named `srp_magnitude`
-- a_srp = κ d
+- K = (P₀/c) C_r (S/m) (AU/DU)² / (1e3 · DU/TU²), with P₀ = 1367 W/m² the solar flux at 1 AU and AU = 149597870.7 km (`srp_coefficient`, computed once in `SpiceParameters`)
+- κ = K / R³
+- a_srp = κ d = K d / R³
 
-Hence a_srp = K d / R³ with
-
-```
-K = P₀ R₀² C_r S / ( c m · 1e3 · LU / TU² )      (independent of r: R₀ depends only on t)
-```
-
-and the exact gradient is
+At 1 AU this is (P₀/c) C_r S/m in m/s², converted to DU/TU². K does not depend on r or t, and the exact gradient is
 
 ```
 G_srp = ∂a_srp/∂r = K ( I₃/R³ − 3 d dᵀ / R⁵ ) = κ ( I₃ − 3 d dᵀ / R² )
@@ -380,14 +376,14 @@ G_srp = ∂a_srp/∂r = K ( I₃/R³ − 3 d dᵀ / R⁵ ) = κ ( I₃ − 3 d d
 
 Notes:
 - This is a repulsive inverse-square field: G_srp is trace-free, with the opposite sign to a point-mass gradient.
-- G_srp needs d (or s). `compute_SRP` therefore returns the scaled Sun position after the acceleration, `{ax, ay, az, xs, ys, zs}`, mirroring `compute_thirdbody_perturbation`. Existing callers use only indices 0..2.
-- `srp_gradient` (`src/perturbations/SRP.cpp`) takes s, forms d = r − s and R = ‖d‖, and recomputes κ with the same helper as `compute_SRP`.
+- `srp_gradient` (`src/perturbations/SRP.cpp`) takes d and κ. The Sun position is the one already queried for its third-body term, so SRP costs no extra ephemeris call.
 - There is no shadow model, which matches the Cartesian model.
+- Before the unified interface, the model took s as the solar system barycenter and scaled the flux by (R₀/R)² with R₀ = ‖s‖ instead of (AU/R)². The SRP results of section 6 and the DOP853 reference of 7.0 were computed with that model.
 
 **Central-body spherical harmonics.** If a gravity field is given (`sh_file`, see [spherical_harmonics.md](spherical_harmonics.md)), `sh_perturbation` adds the acceleration of degrees 2..nmax to a_I. Its gradient is
 
 ```
-G_sh = Tᵀ G_bf T ,      T = pxform(frame, frame_bf, et)
+G_sh = Tᵀ G_bf T ,      T = pxform(naif_frame, sh_frame, et)
 ```
 
 where G_bf is the body-fixed gradient from the V, W recursion.
@@ -402,11 +398,10 @@ where G_bf is the body-fixed gradient from the V, W recursion.
 3. Set et = et0 + t·TU. Loop over the bodies i = 1..N−1:
    - a_I += res[0..2]
    - G += G_i
-   - `if (failed_c()) { reset_c(); return GSL_FAILURE; }`
-4. SRP:
+   - on a SPICE error, save NAIF's message, `reset_c()`, and return `GSL_EBADFUNC`
+4. SRP, if `include_srp`:
    - a_I += a_srp
    - G += G_srp
-   - Recommendation: skip the SRP call entirely when S = 0. The result is bit-identical (κ = 0) and saves an `spkpos_c` call.
    - Central-body spherical harmonics, if given: a_I += a_sh and G += G_sh.
 5. Compute a_rtn = [r̂·a_I, θ̂·a_I, n̂·a_I] and ẋ = b + B a_rtn.
 6. For the STM version only:
@@ -466,7 +461,7 @@ They were run with numpy, mpmath and scipy via `uv run --project . --with mpmath
 - the Moon test state, μ = 4902.800582147760, which has i = 128.5° in J2000, e = 0.919, r_p = 3011 km and r_a = 71529 km
 - MEE states with L = π − 1e-12, −π + 1e-12, exactly π, and 50.3 (8 revolutions)
 
-**Synthetic perturbation model for (b) and (c).** These checks use the exact `compute_thirdbody_perturbation` (Battin) and `compute_SRP` functional forms, with fixed body positions.
+**Synthetic perturbation model for (b) and (c).** These checks use the exact third-body (Battin) and SRP functional forms of the library, with fixed body positions.
 - Two third bodies: μ₁ = 0.4μ at about 3.6 r, and μ₂ = 3e5 μ at about 170 r.
 - SRP with |a_srp| ≈ 0.02 μ/r².
 - An extra arbitrary constant acceleration was added in (b).
@@ -490,7 +485,7 @@ They were run with numpy, mpmath and scipy via `uv run --project . --with mpmath
 | (c') analytic A vs float64 FD (δp = 1e-6 p, others 1e-7) | row-normalised | 2.4e-9 |
 
 **(d) Real ephemerides (DE440 via spiceypy), Moon test case, 20 days.**
-- **Setup.** scipy DOP853, rtol = atol = 1e-13. The model is a Python transcription of `eom_NBodySRP`. For the N-body-only case, the Cartesian Python model reproduces the C++ reference final state in `examples/solve_NbodySTM.cpp` to 1.7e-8 km.
+- **Setup.** scipy DOP853, rtol = atol = 1e-13. The model is a Python transcription of the Cartesian EOM (`eom_rv`). For the N-body-only case, the Cartesian Python model reproduces the C++ reference final state in `examples/solve_rv.cpp` to 1.7e-8 km.
 - **GVE vs Cartesian, with SRP.** ‖Δr‖ = 1.3e-7 km and ‖Δv‖ = 3.9e-13 km/s.
 - **GVE vs Cartesian, without SRP.** ‖Δr‖ = 6.9e-8 km and ‖Δv‖ = 5.0e-13 km/s.
 - **Agreement scales with the integrator tolerance** (with SRP; without SRP it is similar):
@@ -505,17 +500,17 @@ They were run with numpy, mpmath and scipy via `uv run --project . --with mpmath
 - **Φ_MEE(tf) vs central FD of propagated final MEE.** Steps: δp = 1e-6 p₀, others 1e-7.
   - Row-normalised max error: 5.0e-7, on diag(1/p_f,1,…)·Φ·diag(p₀,1,…).
   - Elementwise relative error, for entries > 1e-3 of the row max: 2.6e-5.
-- **Without SRP: Φ_MEE vs J_cart←mee(x_f)⁻¹ Φ_cart J_cart←mee(x₀).** Φ_cart comes from the `eom_stm_NBody` model. Row-normalised: 3.0e-10.
+- **Without SRP: Φ_MEE vs J_cart←mee(x_f)⁻¹ Φ_cart J_cart←mee(x₀).** Φ_cart comes from the `eomstm_rv` model. Row-normalised: 3.0e-10.
 - **Conditioning.** cond(Φ_cart) = 7e12 and cond(Φ_MEE) = 1e12.
 
 ---
 
 ## 7. Test plan for the C++/Python implementation
 
-Public API (implemented; tests in `test-python/test_gve.py`):
+Public API (implemented; tests in `test-python/test_mee.py` and `tests/test_*.cpp`):
 - `mee2cart(mee, mu)`, `cart2mee(rv, mu)` and `mee2cart_jacobian(mee, mu)` (5.7) as free functions, bound in pybind.
-- Propagator `PropagatorGve`, with the same constructor arguments as `PropagatorNbodySrp` (S = 0 removes SRP), and `solve_ivp(et0, tspan, mee0)` (6 states) and `solve_ivp_stm(et0, tspan, y0)` (42 states). `tspan` must be `[t0, tf]` with tf ≥ t0; only forward propagation is supported.
-- For test 7.4: `PropagatorGve.eval_jacobian(et0, t, x) -> (xdot, A)`.
+- `solve_ivp_mee(params, tspan, mee0)` and `solve_ivpstm_mee(params, tspan, mee0)` (STM from Φ(t₀) = I), with the same `SpiceParameters` as `solve_ivp_rv` (`include_srp` adds SRP). `tf < t0` integrates backward.
+- For test 7.4: `eval_mee(params, t, x) -> (xdot, A)`.
 
 All tests below use the kernels `naif0012.tls` and `de440.bsp` from `$SPICE`, as the existing tests do.
 
@@ -526,8 +521,8 @@ et0    = 740463475.5117936
 state0 = [-7505.7613773288285, 44128.19419987408, -55792.327508873765,
            0.07193326412942684, 0.018407794390508374, 0.004868437733535174]
 GM     = [4.902800582147760e+03, 398600.432896939, 132712197035.766]
-BODIES = ["MOON", "EARTH", "SUN"],  frame = "J2000",  LU = TU = 1
-S (param A) = 34.675, m = 1850, rhoS = 0.9, rhoD = 0
+naif_ids = ["MOON", "EARTH", "SUN"],  naif_frame = "J2000",  DU = TU = 1
+S (srp_A) = 34.675, srp_m = 1850, srp_rhoS = 0.9, srp_rhoD = 0
 tspan  = [0, 20*86400]
 ```
 
@@ -537,12 +532,12 @@ Reference values from the Python transcription (float64):
   x0 = [5778.190022842265, -0.34651609849537257, 0.8514048990211349,
         1.9784209071365653, 0.6178109804659669, -1.184288478833202]
   ```
-- **Final MEE with SRP.** DOP853 at rtol 3e-14. Expect agreement to about 1e-8 relative on p and 1e-10 on the others with GSL rk8pd. Use these values only as a sanity check, not as the primary assertion:
+- **Final MEE with SRP.** Use these values only as a sanity check, not as the primary assertion. With the corrected SRP model (above), the reference is the `solve_ivp_mee` result, confirmed by an independent RK4 + spiceypy Cartesian transcription to 1.1e-5 km (4th-order convergence):
   ```
-  [5178.768353783176, 0.88095964643724, -0.28930277538858457,
-   0.24069918804141774, -1.2806778961781318, 21.717565975939248]
+  [5178.576789928225, 0.8809219032708616, -0.28942480229551987,
+   0.24055734575159027, -1.2805787538758713, 21.717427888269437]
   ```
-  L travels 3.64 revolutions.
+  The DOP853 value at rtol 3e-14 with the former SRP model was `[5178.768353783176, 0.88095964643724, -0.28930277538858457, 0.24069918804141774, -1.2806778961781318, 21.717565975939248]`. L travels 3.64 revolutions.
 - **Final MEE without SRP:**
   ```
   [5177.094816314719, 0.8795907367139397, -0.29345826808033154,
@@ -582,15 +577,15 @@ Assertions:
 
 ### 7.2 Two-body invariance
 
-Use the GVE propagator with BODIES = ["MOON"], GM = [GM[0]], S = 0, x0 as above, and 20 days.
-- **p, f, g, h, k are bit-identical to x0 at every output.** With S = 0, `srp_magnitude` is exactly 0, so a_I = 0 and B·a_rtn = 0 exactly. Every RK stage then leaves these five components unchanged, whether or not SRP is short-circuited. Assert `==`.
-- **mee2cart(x(tf)) vs `PropagatorTwoBody(GM[0]).solve_ivp(tspan, state0)`.** ‖Δr‖ ≤ 1e-5 km and ‖Δv‖ ≤ 1e-10 km/s. Both have integration error; the expected value is about 1e-7 km.
+Use `solve_ivp_mee` with `naif_ids = ["MOON"]`, `GMs = [GM[0]]`, no SRP, x0 as above, and 20 days.
+- **p, f, g, h, k are bit-identical to x0 at every output.** With no perturbation, a_I = 0 and B·a_rtn = 0 exactly. Every RK stage then leaves these five components unchanged. Assert `==`.
+- **mee2cart(x(tf)) vs `solve_ivp_rv` with the central body only.** ‖Δr‖ ≤ 1e-5 km and ‖Δv‖ ≤ 1e-10 km/s. Both have integration error; the expected value is about 1e-7 km.
 
 ### 7.3 GVE vs Cartesian, final-state agreement
 
-Use the Moon data (7.0) with the default tolerances (abstol 1e-12, reltol 1e-14) in both propagators.
-- **With SRP.** Propagate x0 with the MEE propagator and state0 with `PropagatorNbodySrp`. Assert ‖mee2cart(x_f) − rv_f‖ ≤ 1e-5 km in position and ≤ 1e-10 km/s in velocity. Expected about 1e-7 km and 4e-13 km/s; see 6(d).
-- **Without SRP.** Same comparison against `PropagatorNbody`, using `PropagatorGve` with S = 0. The C++ Cartesian reference final state is in `examples/solve_NbodySTM.cpp`.
+Use the Moon data (7.0) with the default tolerances (atol 1e-12, rtol 1e-14) in both solvers.
+- **With SRP.** Propagate x0 with `solve_ivp_mee` and state0 with `solve_ivp_rv`, from the same `SpiceParameters`. Assert ‖mee2cart(x_f) − rv_f‖ ≤ 1e-5 km in position and ≤ 1e-10 km/s in velocity. Expected about 1e-7 km and 4e-13 km/s; see 6(d).
+- **Without SRP.** Same comparison with `include_srp = False`. The C++ Cartesian reference final state is in `examples/solve_rv.cpp`.
 - **Also assert, in MEE space:** |p_f − p_c|/p ≤ 1e-9, |Δf|, |Δg|, |Δh|, |Δk| ≤ 1e-9 and |wrap(L_f − L_c)| ≤ 1e-9, where x_c = cart2mee(rv_f).
 
 ### 7.4 Analytic Jacobian vs FD of the RHS (single epoch)
@@ -598,7 +593,7 @@ Use the Moon data (7.0) with the default tolerances (abstol 1e-12, reltol 1e-14)
 Use x0 with the Moon data at t = 0 and also at t = 5 days, plus the LEO, GTO and i = 170° MEE states with BODIES = ["EARTH", "MOON", "SUN"] (Earth GM first).
 - Central FD with δp = 1e-6·p and δ = 1e-7 for f, g, h, k, L.
 - Compare Ā = A·diag(p,1,1,1,1,1) row by row: max_j |Ā_ij − Ā^FD_ij| ≤ 1e-6 · max_j |Ā^FD_ij|. The observed float64 value is 2.4e-9 with inflated perturbations.
-- Additionally assert the SRP-only gradient: compare G_srp with FD of `compute_SRP` in r, δ = 1e-3 km, relative tolerance 1e-6.
+- Additionally assert the SRP-only gradient: compare G_srp with FD of the SRP acceleration in r, δ = 1e-3 km, relative tolerance 1e-6 (`test_jacobian_vs_fd_srp_only` uses a massless Sun).
 
 ### 7.5 Propagated Φ vs FD of final states
 
@@ -607,11 +602,11 @@ Use the Moon data with SRP over 20 days.
 - **Consistency check first.** The first 6 entries must match the 6-state run to ≤ 1e-7 relative. The step sequence differs; observed 1.4e-8 km in p.
 - **FD.** For each column j, propagate x0 ± δ_j e_j with δp = 1e-6·p₀ (≈ 5.8e-3 km) and δ = 1e-7 for the others, then take central differences.
 - **Assertion.** Form Φ̃ = diag(1/p_f,1,1,1,1,1)·Φ·diag(p₀,1,1,1,1,1). Require max_j |Φ̃_ij − Φ̃^FD_ij| ≤ 1e-4 · max_j |Φ̃^FD_ij| for each row. Observed 5e-7.
-- **Why the scaling.** Φ entries span about 1e-3 (∂f/∂p) to 7e5 km (∂p/∂g), so an unscaled elementwise rtol is meaningless. The rtol of 1e-2 used in `solve_NbodySTM.cpp` would also pass but is needlessly loose.
+- **Why the scaling.** Φ entries span about 1e-3 (∂f/∂p) to 7e5 km (∂p/∂g), so an unscaled elementwise rtol is meaningless. The rtol of 1e-2 used in `solve_rv.cpp` would also pass but is needlessly loose.
 
 ### 7.6 Φ_MEE vs the Cartesian STM (S = 0)
 
-Use the Moon data without SRP: S = 0 in the MEE propagator, and `PropagatorNbody::solve_ivp_stm`.
+Use the Moon data without SRP: `solve_ivpstm_mee` and `solve_ivpstm_rv`. With SRP the same comparison holds, since the Cartesian STM includes the SRP gradient.
 
 ```
 J0 = J_cart←mee(x0),  Jf = J_cart←mee(x_f)                      (5.7, analytic; or FD of mee2cart)
@@ -624,17 +619,17 @@ J0 = J_cart←mee(x0),  Jf = J_cart←mee(x_f)                      (5.7, analyt
 
 ### 7.7 Integrator tolerances for the MEE state
 
-GSL's `gsl_odeiv2_control_y_new(abstol, reltol)` accepts a step when |err_i| ≤ abstol + reltol·|y_i| for every component, including all 36 STM entries.
+GSL's `gsl_odeiv2_control_y_new(atol, rtol)` accepts a step when |err_i| ≤ atol + rtol·|y_i| for every component, including all 36 STM entries.
 
 How the state scales:
-- **p** is O(1e3–1e4) km, so it is controlled by reltol. With reltol = 1e-14, that is about 6e-11 km.
-- **f, g, h, k** are O(1), so they are controlled by abstol. This is about 1e-12, which corresponds to roughly p·1e-12 ≈ 6e-9 km of position.
-- **L** grows without bound: about 22 rad after 20 days here, and about 6e2 rad after 100 revolutions. Its effective tolerance is abstol + reltol·|L|, which loosens linearly with the number of revolutions. With reltol = 1e-14 this stays below 1e-11 rad for 100 revolutions, which is negligible.
+- **p** is O(1e3–1e4) km, so it is controlled by rtol. With rtol = 1e-14, that is about 6e-11 km.
+- **f, g, h, k** are O(1), so they are controlled by atol. This is about 1e-12, which corresponds to roughly p·1e-12 ≈ 6e-9 km of position.
+- **L** grows without bound: about 22 rad after 20 days here, and about 6e2 rad after 100 revolutions. Its effective tolerance is atol + rtol·|L|, which loosens linearly with the number of revolutions. With rtol = 1e-14 this stays below 1e-11 rad for 100 revolutions, which is negligible.
 
 Recommendations:
-- **Keep the defaults** (abstol 1e-12, reltol 1e-14) for tests 7.3–7.6. They are no tighter than machine precision for any component: the spacing of L ≈ 22 is 3.6e-15.
-- **For production with long arcs,** consider `gsl_odeiv2_control_scaled_new` with `scale_abs = {1/p₀ … }`, or simply pass p in a scaled LU (e.g. LU = p₀), so that all six elements are O(1). Then a single abstol is meaningful.
-- **Choose LU and TU consistently.** If LU ≠ 1, every GM must be in LU³/TU², exactly as for the Cartesian propagators. The SRP scaling inside `compute_SRP` is unchanged.
+- **Keep the defaults** (atol 1e-12, rtol 1e-14) for tests 7.3–7.6. They are no tighter than machine precision for any component: the spacing of L ≈ 22 is 3.6e-15.
+- **For production with long arcs,** consider `gsl_odeiv2_control_scaled_new` with `scale_abs = {1/p₀ … }`, or simply pass p in a scaled DU (e.g. DU = p₀), so that all six elements are O(1). Then a single atol is meaningful.
+- **Units.** `SpiceParameters` derives TU and the scaled GMs from DU, so the Cartesian and MEE solvers always see consistent units. The SRP scaling is the same in both.
 
 ### 7.8 Things the engineer must be careful about
 
@@ -642,10 +637,10 @@ Recommendations:
 2. **Build C from (h, k, L) via (3.1), not from v.** The Jacobian in Section 5 assumes this. With this choice it needs no ∂v/∂x.
 3. **The B[1][2] and B[2][2] normal terms** are −σgZ/w and +σfZ/w. Do not copy them from a reference without checking against 7.3.
 4. **The p-column of ∂B/∂x** uses 3/(2p) for B[0][1] and 1/(2p) for every other entry.
-5. **The third-body gradient** takes the LU-scaled body position, `res[3..5]`, not the raw `spkpos_c` output.
-6. **The SRP gradient has the repulsive sign:** κ(I − 3 d̂ d̂ᵀ). `compute_SRP` must expose s (or d).
+5. **The third-body gradient** takes the DU-scaled body position, not the raw ephemeris output in km.
+6. **The SRP gradient has the repulsive sign:** κ(I − 3 d̂ d̂ᵀ).
 7. **The Moon test state is retrograde with respect to J2000** (i = 128.5°, h ≈ 1.98). This is fine for I = +1. However, if a trajectory approaches i = 180°, then h, k → ∞. The EOM has no singularity check of its own: it only returns `GSL_EDOM` for p ≤ 0 or w ≤ 0, which makes GSL retry with a smaller step (2.1), and accuracy degrades as h, k grow. A regression test integrates i = 179.9° for 30 days. Document the limitation.
-8. **SPICE error handling.** After every `spkpos_c` call, use `if (failed_c()) { reset_c(); return GSL_FAILURE; }`, exactly as `eom_NBodySRP` does.
+8. **SPICE error handling.** After every ephemeris call, `add_perturbations` saves NAIF's message, calls `reset_c()` and returns `GSL_EBADFUNC`, which stops GSL at once (any other status would make it retry with ever smaller steps). The solvers then throw `std::runtime_error` with the message.
 9. **Evaluate the ephemerides once per RHS call.** et is the same for every body, and the third-body and SRP calls share it. The Jacobian reuses a_I and the same positions, so no extra SPICE calls are needed for the STM.
 
 ---

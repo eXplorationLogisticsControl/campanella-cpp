@@ -29,7 +29,6 @@
 #include <sys/stat.h>
 #endif
 #include <SpiceUsr.h>          // access SPICE files
-#include "eoms/params.h"
 #include "perturbations/spherical_harmonics.h"
 
 namespace {
@@ -744,15 +743,15 @@ bool sh_accel_bf(const SphericalHarmonicsModel& model,
  * With T = pxform(frame, frame_bf, et), r_bf = T r, a = T^T a_bf and GG = T^T G_bf T.
  * The rotation rate does not enter: GG is d(a)/d(r) at fixed t.
  *
- * @param rvec spacecraft position in the frame of integration, in LU
+ * @param rvec spacecraft position in the frame of integration, in DU
  * @param et epoch, in ephemeris seconds
  * @param frame_cspice NAIF name of frame of integration
  * @param frame_bf_cspice NAIF name of the body-fixed frame of the coefficients
  * @param model coefficients and factors
  * @param ws V, W tables, sized for model.nmax
- * @param mu_sh GM of the coefficients, scaled for LU, TU (GM_file TU^2 / LU^3)
- * @param R_sh reference radius of the coefficients, divided by LU
- * @param a acceleration to be computed, in LU/TU^2
+ * @param mu_sh GM of the coefficients, scaled for DU, TU (GM_file TU^2 / DU^3)
+ * @param R_sh reference radius of the coefficients, divided by DU
+ * @param a acceleration to be computed, in DU/TU^2
  * @param GG 3-by-3 gradient to be computed, in 1/TU^2, or nullptr to skip it
  * @param rho_min smallest |r|/R evaluated, see sh_accel_bf
  * @return false on a SPICE error (failed_c() is left set) or if |r|/R < rho_min (failed_c() is not set)
@@ -804,79 +803,4 @@ bool sh_perturbation(const double rvec[3],
         }
     }
     return true;
-}
-
-
-/**
- * Attach a gravity field to the EOM parameters
- *
- * The spherical harmonics use the GM and radius of the file; the point mass keeps using GM[0].
- * Throws std::invalid_argument if GM[0] (converted to km^3/s^2 with LU, TU) differs from the
- * GM of the file by more than 1e-5 (relative): wrong central body or unscaled GM[0].
- *
- * @param params N-body parameters; GM, LU and TU must already be set
- * @param options gravity field file, nmax, mmax and body-fixed frame; no-op if options.file is empty
- */
-void setup_spherical_harmonics(ParamsNbody& params, const SphericalHarmonicsOptions& options) {
-    if (options.file.empty()) {
-        return;
-    }
-    if (options.nmax < 2) {
-        throw std::invalid_argument("spherical harmonics: sh_nmax must be >= 2 when sh_file is given");
-    }
-    if (!(options.rho_min > 0.0 && options.rho_min <= 1.0)) {
-        throw std::invalid_argument("spherical harmonics: sh_rho_min must be in (0, 1]");
-    }
-    if (options.frame_bf.empty()) {
-        throw std::invalid_argument("spherical harmonics: frame_bf (e.g. MOON_PA, ITRF93) is required");
-    }
-    if (params.GM.empty()) {
-        throw std::invalid_argument("spherical harmonics: GM is empty");
-    }
-    std::shared_ptr<const SphericalHarmonicsModel> model =
-        load_spherical_harmonics_cached(options.file, options.nmax, options.mmax);
-
-    const double LU = params.LU;
-    const double TU = params.TU;
-    const double GM0_km = params.GM[0]*LU*LU*LU / (TU*TU);
-    if (!(std::abs(model->GM_km3s2 - GM0_km) <= 1e-5*model->GM_km3s2)) {
-        std::ostringstream msg;
-        msg.precision(16);
-        msg << "spherical harmonics: GM[0] * LU^3 / TU^2 = " << GM0_km << " km^3/s^2 differs from the GM of "
-            << options.file << " (" << model->GM_km3s2 << " km^3/s^2) by more than 1e-5";
-        throw std::invalid_argument(msg.str());
-    }
-    params.sh = model;
-    params.sh_ws = std::make_shared<SphericalHarmonicsWorkspace>(model->nmax);
-    params.frame_bf = options.frame_bf;
-    params.mu_sh = model->GM_km3s2*TU*TU / (LU*LU*LU);
-    params.R_sh = model->R_km / LU;
-    params.sh_rho_min = options.rho_min;
-}
-
-
-/**
- * True if the last spherical-harmonics evaluation of params refused a position below
- * rho_min * R. The EOMs reset the flag at every call, so after a failed integration step
- * it tells whether the SH domain check (and not, e.g., a SPICE error) stopped it.
- */
-bool sh_below_rho_min(const ParamsNbody& params) {
-    return params.sh && params.sh_ws && params.sh_ws->below_rho_min;
-}
-
-
-/**
- * Throw std::domain_error: the trajectory went below rho_min * R, where the SH series is not evaluated
- *
- * @param params N-body parameters with SH
- * @param t time of the failed step, in TU
- */
-void throw_sh_domain_error(const ParamsNbody& params, double t) {
-    std::ostringstream msg;
-    msg.precision(15);
-    msg << "spherical harmonics: the trajectory went below sh_rho_min * R (|r|/R = " << params.sh_ws->rho
-        << " < " << params.sh_rho_min << ", R = " << params.sh->R_km << " km) at t = " << t
-        << " TU; the integration was stopped. For low or landing arcs, a sh_rho_min slightly below 1"
-           " (e.g. 0.99) may be used, but the series is not guaranteed to converge there.";
-    throw std::domain_error(msg.str());
 }

@@ -20,9 +20,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Download SPICE kernels
-        # Tests expect $SPICE/lsk/naif0012.tls and $SPICE/spk/de440.bsp, and for the
-        # spherical-harmonics body-fixed frames $SPICE/pck/moon_pa_de440_200625.bpc,
-        # $SPICE/fk/moon_de440_250416.tf (MOON_PA) and $SPICE/pck/earth_latest_high_prec.bpc (ITRF93).
+        # Tests expect $SPICE/lsk/naif0012.tls, $SPICE/spk/de440.bsp, $SPICE/pck/gm_de440.tpc (GMs read
+        # from the kernel pool), and for the spherical-harmonics body-fixed frames
+        # $SPICE/pck/moon_pa_de440_200625.bpc, $SPICE/fk/moon_de440_250416.tf (MOON_PA) and
+        # $SPICE/pck/earth_latest_high_prec.bpc (ITRF93).
         run: |
           mkdir -p kernels/lsk kernels/spk kernels/pck kernels/fk
           curl -fL -o kernels/lsk/naif0012.tls \
@@ -35,20 +36,30 @@ jobs:
             https://naif.jpl.nasa.gov/pub/naif/generic_kernels/fk/satellites/moon_de440_250416.tf
           curl -fL -o kernels/pck/earth_latest_high_prec.bpc \
             https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/earth_latest_high_prec.bpc
+          curl -fL -o kernels/pck/gm_de440.tpc \
+            https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/gm_de440.tpc
 
-      - name: Build the C++ library and examples
+      - name: Build the C++ library, examples and tests
         run: |
-          cmake -B build-cpp -S . -DCAMPANELLA_BUILD_PYTHON=OFF -DCAMPANELLA_BUILD_CPP=ON
+          cmake -B build-cpp -S . -DCAMPANELLA_BUILD_PYTHON=OFF -DCAMPANELLA_BUILD_CPP=ON \
+            -DCAMPANELLA_BUILD_TESTS=ON
           cmake --build build-cpp --parallel
+
+      - name: Run C++ tests
+        env:
+          SPICE: ${{ github.workspace }}/kernels
+          # fail, rather than skip, the tests that need kernels
+          CAMPANELLA_REQUIRE_KERNELS: 1
+        working-directory: build-cpp
+        run: ctest --output-on-failure --parallel 4
 
       - name: Run C++ examples
         env:
           SPICE: ${{ github.workspace }}/kernels
         run: |
           ./build-cpp/bin/solve_twobody
-          ./build-cpp/bin/solve_Nbody
-          ./build-cpp/bin/solve_NbodySTM
-          ./build-cpp/bin/solve_gve
+          ./build-cpp/bin/solve_rv
+          ./build-cpp/bin/solve_mee
           ./build-cpp/bin/solve_moon_canonical
           ./build-cpp/bin/solve_sh
 

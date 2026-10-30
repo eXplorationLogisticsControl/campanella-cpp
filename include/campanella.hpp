@@ -1,21 +1,25 @@
 #ifndef CAMPANELLA_HPP
 #define CAMPANELLA_HPP
 
+// Public C++ interface of campanella. Only standard headers are included here: CSPICE, GSL and
+// the internal headers under src/ stay private to the library.
+
+#include <array>
+#include <cstddef>
+#include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
 
-#include "propagate/propagate_twobody.h"
-#include "propagate/propagate_Nbody.h"
-#include "propagate/propagate_NbodySRP.h"
-#include "propagate/propagate_stm_Nbody.h"
-#include "propagate/propagate_gve.h"
-#include "propagate/propagate_stm_gve.h"
-#include "eoms/mee.h"
-#include "perturbations/spherical_harmonics.h"
-
 namespace campanella {
+
+namespace detail {
+struct Model;
+struct Workspace;
+struct Access;
+}  // namespace detail
 
 // CSPICE's default error action is to print a traceback and exit the process.
 // RETURN leaves the error flag set so callers can turn it into an exception.
@@ -26,152 +30,180 @@ void init_spice();
 void furnsh(const std::string& path);
 
 /**
- * Propagates a spacecraft using two-body equations of motion.
+ * Optional inputs of SpiceParameters. Set the fields by name, then pass the struct.
  *
- * @param GM gravitational parameter
- * @param reltol relative error tolerance, defaults to 1e-14
- * @param abstol absolute error tolerance, defaults to 1e-12
- */
-struct PropagatorTwoBody {
-    double GM;
-    double reltol;
-    double abstol;
-
-    PropagatorTwoBody(double GM, double reltol = 1e-14, double abstol = 1e-12)
-        : GM(GM), reltol(reltol), abstol(abstol) {}
-
-    std::vector<std::tuple<double, double, double, double, double, double, double>> solve_ivp(
-        const std::vector<double>& tspan,
-        const std::vector<double>& y0) {
-        return ::solve_ivp_twobody(tspan, y0, GM, reltol, abstol);
-    }
-};
-
-/**
- * Propagates a spacecraft using N-body equations of motion.
- *
- * @param GM list of gravitational parameters of each body
- * @param BODIES list of NAIF names of each body
- * @param frame inertial reference frame
- * @param LU length unit
- * @param TU time unit
- * @param reltol relative error tolerance, defaults to 1e-14
- * @param abstol absolute error tolerance, defaults to 1e-12
- * @param sh_file optional central-body gravity field (.tab or .gfc), see docs/spherical_harmonics.md
+ * @param naif_frame inertial frame of integration, e.g. "J2000"
+ * @param GMs gravitational parameters in km^3/s^2, one per NAIF id; empty means read "GM" of
+ *        each body from the loaded kernels (e.g. gm_de440.tpc)
+ * @param DU distance unit in km; with use_canonical_scales, VU = sqrt(GMs[0] / DU) and TU = DU / VU
+ * @param use_canonical_scales if false, or if DU is not given, DU = TU = VU = 1 (km, s, km/s)
+ * @param abcorr aberration correction of the ephemerides; only "NONE" is accepted
+ * @param include_srp solar radiation pressure; requires the Sun (NAIF id 10) among the NAIF ids
+ * @param srp_A area of the spacecraft, in m^2
+ * @param srp_m mass of the spacecraft, in kg
+ * @param srp_rhoS specular reflection coefficient
+ * @param srp_rhoD diffuse reflection coefficient
+ * @param sh_file central-body gravity field (PDS SHADR .tab or ICGEM .gfc); "" means none
  * @param sh_nmax truncation degree of the gravity field (>= 2 if sh_file is given)
- * @param sh_mmax truncation order of the gravity field; -1 means min(sh_nmax, order of the file)
- * @param frame_bf body-fixed frame of the gravity field, e.g. "MOON_PA", "ITRF93"
+ * @param sh_mmax truncation order; -1 means min(sh_nmax, order of the file)
+ * @param sh_frame body-fixed frame of the gravity field, e.g. "MOON_PA", "ITRF93"
  * @param sh_rho_min smallest |r|/R at which the field is evaluated, in (0, 1]; below it the
  *        propagation throws std::domain_error
  */
-struct PropagatorNbody {
-    std::vector<double> GM;
-    std::vector<std::string> BODIES;
-    std::string frame;
-    double LU;
-    double TU;
-    double reltol;
-    double abstol;
-    SphericalHarmonicsOptions sh;
-
-    PropagatorNbody(std::vector<double> GM,
-                    std::vector<std::string> BODIES,
-                    std::string frame,
-                    double LU,
-                    double TU,
-                    double reltol = 1e-14,
-                    double abstol = 1e-12,
-                    std::string sh_file = "",
-                    int sh_nmax = 0,
-                    int sh_mmax = -1,
-                    std::string frame_bf = "",
-                    double sh_rho_min = 1.0)
-        : GM(GM), BODIES(BODIES), frame(frame), LU(LU), TU(TU), reltol(reltol), abstol(abstol),
-          sh{sh_file, sh_nmax, sh_mmax, frame_bf, sh_rho_min} {}
-
-    std::vector<std::tuple<double, double, double, double, double, double, double>> solve_ivp(
-        double et0,
-        const std::vector<double>& tspan,
-        const std::vector<double>& y0) {
-        return ::solve_ivp_nbody(
-            et0, tspan, y0, GM, BODIES, frame, LU, TU, reltol, abstol, sh);
-    }
-
-    std::vector<std::tuple<double,
-                           double, double, double, double, double, double,
-                           double, double, double, double, double, double,
-                           double, double, double, double, double, double,
-                           double, double, double, double, double, double,
-                           double, double, double, double, double, double,
-                           double, double, double, double, double, double,
-                           double, double, double, double, double, double>> solve_ivp_stm(
-        double et0,
-        const std::vector<double>& tspan,
-        const std::vector<double>& y0) {
-        return ::solve_ivp_stm_nbody(
-            et0, tspan, y0, GM, BODIES, frame, LU, TU, reltol, abstol, sh);
-    }
+struct SpiceOptions {
+    std::string naif_frame = "J2000";
+    std::vector<double> GMs;
+    std::optional<double> DU;
+    bool use_canonical_scales = true;
+    std::string abcorr = "NONE";
+    bool include_srp = false;
+    double srp_A = 0.0;
+    double srp_m = 0.0;
+    double srp_rhoS = 0.0;
+    double srp_rhoD = 0.0;
+    std::string sh_file;
+    int sh_nmax = 0;
+    int sh_mmax = -1;
+    std::string sh_frame;
+    double sh_rho_min = 1.0;
 };
 
 /**
- * Propagates a spacecraft using N-body equations of motion with solar radiation pressure.
+ * Dynamics model: central body, third bodies, SRP and spherical harmonics, and the units.
+ * Immutable after construction. Copies share the model and are otherwise independent; a move is
+ * a copy.
  *
- * @param GM list of gravitational parameters of each body
- * @param BODIES list of NAIF names of each body
- * @param frame inertial reference frame
- * @param A surface area of spacecraft
- * @param m mass of spacecraft
- * @param rhoS reflection rate of spacecraft
- * @param rhoD scattering rate of spacecraft
- * @param LU length unit
- * @param TU time unit
- * @param reltol relative error tolerance, defaults to 1e-14
- * @param abstol absolute error tolerance, defaults to 1e-12
- * @param sh_file, sh_nmax, sh_mmax, frame_bf, sh_rho_min optional central-body gravity field, as PropagatorNbody
+ * Not thread-safe: CSPICE is not, and the eom_* and eval_* functions use the scratch space of the
+ * object. Use one thread for SPICE-dependent calls.
+ *
+ * States, times and outputs are in DU, DU/TU and TU; the ephemerides are queried at
+ * et = et0 + t * TU.
+ *
+ * @param et0 reference epoch, in TDB seconds past J2000
+ * @param naif_ids NAIF names or numeric ids, e.g. {"MOON", "EARTH", "10"}; the first one is the
+ *        central body, the others are third bodies
+ * @param options see SpiceOptions
+ * @throws std::invalid_argument on bad input, std::runtime_error with NAIF's message on a SPICE error
  */
-struct PropagatorNbodySrp {
-    std::vector<double> GM;
-    std::vector<std::string> BODIES;
-    std::string frame;
-    double A;
-    double m;
-    double rhoS;
-    double rhoD;
-    double LU;
-    double TU;
-    double reltol;
-    double abstol;
-    SphericalHarmonicsOptions sh;
+class SpiceParameters {
+public:
+    SpiceParameters(double et0, std::vector<std::string> naif_ids, SpiceOptions options = {});
+    SpiceParameters(const SpiceParameters& other);
+    SpiceParameters& operator=(const SpiceParameters& other);
+    ~SpiceParameters();
 
-    PropagatorNbodySrp(std::vector<double> GM,
-                       std::vector<std::string> BODIES,
-                       std::string frame,
-                       double A,
-                       double m,
-                       double rhoS,
-                       double rhoD,
-                       double LU,
-                       double TU,
-                       double reltol = 1e-14,
-                       double abstol = 1e-12,
-                       std::string sh_file = "",
-                       int sh_nmax = 0,
-                       int sh_mmax = -1,
-                       std::string frame_bf = "",
-                       double sh_rho_min = 1.0)
-        : GM(GM), BODIES(BODIES), frame(frame), A(A), m(m), rhoS(rhoS), rhoD(rhoD),
-          LU(LU), TU(TU), reltol(reltol), abstol(abstol),
-          sh{sh_file, sh_nmax, sh_mmax, frame_bf, sh_rho_min} {}
+    double et0() const;
+    const std::vector<std::string>& naif_ids() const;   // as given
+    const std::vector<int>& naif_codes() const;         // resolved NAIF codes; [0] is the central body
+    const std::string& naif_frame() const;
+    const std::vector<double>& GMs() const;             // km^3/s^2
+    const std::vector<double>& mus() const;             // GMs * TU^2 / DU^3
+    double DU() const;                                  // km
+    double TU() const;                                  // s
+    double VU() const;                                  // km/s
+    bool include_srp() const;
+    bool include_spherical_harmonics() const;
+    const SpiceOptions& options() const;                // inputs, with GMs filled in
 
-    std::vector<std::tuple<double, double, double, double, double, double, double>> solve_ivp(
-        double et0,
-        const std::vector<double>& tspan,
-        const std::vector<double>& y0) {
-        return ::solve_ivp_nbody_srp(
-            et0, tspan, y0, GM, BODIES, frame, A, m, rhoS, rhoD, LU, TU, reltol, abstol, sh);
-    }
+private:
+    friend struct detail::Access;
+    std::shared_ptr<const detail::Model> model_;
+    std::unique_ptr<detail::Workspace> ws_;             // scratch space of the eom_* functions
 };
 
+/**
+ * Integration options.
+ *
+ * @param atol absolute error tolerance
+ * @param rtol relative error tolerance
+ * @param t_eval output times, in TU, strictly monotonic in the direction of integration and
+ *        within tspan; empty means every accepted step (including tspan[0] and tspan[1])
+ */
+struct IvpOptions {
+    double atol = 1e-12;
+    double rtol = 1e-14;
+    std::vector<double> t_eval;
+};
+
+/**
+ * Solution of an initial value problem.
+ *
+ * @param t times, in TU (N)
+ * @param x states, N x 6 row-major: Cartesian [DU, DU/TU], or MEE [p in DU, f, g, h, k, L]
+ *        with L not wrapped
+ * @param stm state-transition matrices Phi(t, t0), N x 36, each 6x6 row-major; empty for solve_ivp_*
+ */
+struct IvpResult {
+    std::vector<double> t;
+    std::vector<double> x;
+    std::vector<double> stm;
+    std::size_t size() const { return t.size(); }
+};
+
+/**
+ * Propagate a Cartesian state [x, y, z, vx, vy, vz].
+ *
+ * @param params dynamics model
+ * @param tspan {t0, tf}, in TU since et0; tf < t0 integrates backward, tf == t0 returns one row
+ * @param x0 initial state (6)
+ * @param options tolerances and output times
+ * @throws std::invalid_argument on bad input; std::domain_error if the trajectory goes below
+ *         sh_rho_min * R; std::runtime_error with NAIF's message on a SPICE error, or if the
+ *         integration fails. A partial trajectory is never returned.
+ */
+IvpResult solve_ivp_rv(const SpiceParameters& params, const std::vector<double>& tspan,
+                       const std::vector<double>& x0, const IvpOptions& options = {});
+
+/**
+ * Propagate modified equinoctial elements [p, f, g, h, k, L] (prograde, I = +1) with the Gauss
+ * variational equations. The dynamics are the same as solve_ivp_rv.
+ * As solve_ivp_rv; also throws std::domain_error if p <= 0 or 1 + f cos L + g sin L <= 0 persists.
+ */
+IvpResult solve_ivp_mee(const SpiceParameters& params, const std::vector<double>& tspan,
+                        const std::vector<double>& x0, const IvpOptions& options = {});
+
+// As solve_ivp_rv, also integrating the STM from Phi(t0, t0) = I. x0 has 6 elements.
+IvpResult solve_ivpstm_rv(const SpiceParameters& params, const std::vector<double>& tspan,
+                          const std::vector<double>& x0, const IvpOptions& options = {});
+
+// As solve_ivp_mee, also integrating the STM from Phi(t0, t0) = I. x0 has 6 elements.
+IvpResult solve_ivpstm_mee(const SpiceParameters& params, const std::vector<double>& tspan,
+                           const std::vector<double>& x0, const IvpOptions& options = {});
+
+/**
+ * Equations of motion with the signature of gsl_odeiv2_system::function.
+ * params points to a SpiceParameters, whose scratch space is written.
+ * eom_* take 6 states; eomstm_* take 42: the state, then Phi row-major, with Phi_dot = A Phi.
+ *
+ * @return 0 (GSL_SUCCESS); GSL_EDOM (1) for a state out of the domain or a non-finite derivative
+ *         (GSL retries with a smaller step); GSL_EBADFUNC (9) on a SPICE error (GSL stops).
+ *         eom_error describes the last failure.
+ */
+int eom_rv(double t, const double x[], double dxdt[], void* params);
+int eom_mee(double t, const double x[], double dxdt[], void* params);
+int eomstm_rv(double t, const double x[], double dxdt[], void* params);
+int eomstm_mee(double t, const double x[], double dxdt[], void* params);
+
+// Why the last eom_* or eval_* call on params failed (with NAIF's message for a SPICE error);
+// "" if it succeeded
+std::string eom_error(const SpiceParameters& params);
+
+/**
+ * Time derivative and Jacobian at a single time and state.
+ *
+ * @param xdot d(x)/dt (6)
+ * @param A d(xdot)/dx, 6x6 row-major
+ */
+struct EomEval {
+    std::array<double, 6> xdot;
+    std::array<double, 36> A;
+};
+
+// Evaluate eom_rv and its Jacobian at t (TU) and Cartesian x. Throws as solve_ivp_rv.
+EomEval eval_rv(const SpiceParameters& params, double t, const std::vector<double>& x);
+
+// Evaluate eom_mee and its Jacobian at t (TU) and MEE x. Throws std::domain_error if p <= 0 or w <= 0.
+EomEval eval_mee(const SpiceParameters& params, double t, const std::vector<double>& x);
 
 /**
  * Spherical-harmonics potential, acceleration and gradient in the body-fixed frame (degrees 2..nmax).
@@ -195,20 +227,20 @@ std::tuple<double, std::vector<double>, std::vector<double>> sh_accel_bf(
  *
  * @param path gravity field file (.tab or .gfc)
  * @param nmax truncation degree
- * @param frame inertial frame of r, e.g. "J2000"
- * @param frame_bf body-fixed frame of the gravity field, e.g. "MOON_PA", "ITRF93"
+ * @param naif_frame inertial frame of r, e.g. "J2000"
+ * @param sh_frame body-fixed frame of the gravity field, e.g. "MOON_PA", "ITRF93"
  * @param et epoch, in ephemeris seconds
- * @param r position, in LU
- * @param LU length unit
- * @param TU time unit
+ * @param r position, in DU
+ * @param DU distance unit, km
+ * @param TU time unit, s
  * @param mmax truncation order; -1 means min(nmax, order of the file)
  * @param rho_min smallest |r|/R evaluated, in (0, 1]
- * @return (a, G): a in LU/TU^2, G = d(a)/d(r) in 1/TU^2, 3x3 row-major;
+ * @return (a, G): a in DU/TU^2, G = d(a)/d(r) in 1/TU^2, 3x3 row-major;
  *         throws std::runtime_error on SPICE error, std::domain_error if |r| < rho_min R
  */
 std::pair<std::vector<double>, std::vector<double>> sh_accel_inertial(
-    const std::string& path, int nmax, const std::string& frame, const std::string& frame_bf,
-    double et, const std::vector<double>& r, double LU = 1.0, double TU = 1.0, int mmax = -1,
+    const std::string& path, int nmax, const std::string& naif_frame, const std::string& sh_frame,
+    double et, const std::vector<double>& r, double DU = 1.0, double TU = 1.0, int mmax = -1,
     double rho_min = 1.0);
 
 /**
@@ -218,9 +250,7 @@ std::pair<std::vector<double>, std::vector<double>> sh_accel_inertial(
  * @param mu gravitational parameter
  * @return [x, y, z, vx, vy, vz]; throws std::domain_error if p <= 0 or 1 + f cos L + g sin L <= 0
  */
-inline std::vector<double> mee2cart(const std::vector<double>& mee, double mu) {
-    return ::mee2cart(mee, mu);
-}
+std::vector<double> mee2cart(const std::vector<double>& mee, double mu);
 
 /**
  * Converts a Cartesian state to modified equinoctial elements (MEE).
@@ -230,9 +260,7 @@ inline std::vector<double> mee2cart(const std::vector<double>& mee, double mu) {
  * @return [p, f, g, h, k, L] with L in (-pi, pi]; throws std::domain_error for zero
  *         angular momentum or inclination within ~1.4e-6 rad of 180 deg
  */
-inline std::vector<double> cart2mee(const std::vector<double>& rv, double mu) {
-    return ::cart2mee(rv, mu);
-}
+std::vector<double> cart2mee(const std::vector<double>& rv, double mu);
 
 /**
  * Jacobian d(x, y, z, vx, vy, vz)/d(p, f, g, h, k, L) of mee2cart.
@@ -241,102 +269,7 @@ inline std::vector<double> cart2mee(const std::vector<double>& rv, double mu) {
  * @param mu gravitational parameter
  * @return 6x6 matrix, row-major (36 elements)
  */
-inline std::vector<double> mee2cart_jacobian(const std::vector<double>& mee, double mu) {
-    return ::mee2cart_jacobian(mee, mu);
-}
-
-/**
- * Propagates a spacecraft in modified equinoctial elements (MEE) using the Gauss variational
- * equations, with N-body and solar radiation pressure perturbations.
- * The physics is the same as PropagatorNbodySrp; set A = 0 to remove SRP.
- * States are [p, f, g, h, k, L] (prograde, I = +1; singular as the inclination approaches 180 deg).
- *
- * @param GM list of gravitational parameters of each body; GM[0] is the central body
- * @param BODIES list of NAIF names of each body
- * @param frame inertial reference frame
- * @param A surface area of spacecraft
- * @param m mass of spacecraft
- * @param rhoS reflection rate of spacecraft
- * @param rhoD scattering rate of spacecraft
- * @param LU length unit
- * @param TU time unit
- * @param reltol relative error tolerance, defaults to 1e-14
- * @param abstol absolute error tolerance, defaults to 1e-12
- * @param sh_file, sh_nmax, sh_mmax, frame_bf, sh_rho_min optional central-body gravity field, as PropagatorNbody
- */
-struct PropagatorGve {
-    std::vector<double> GM;
-    std::vector<std::string> BODIES;
-    std::string frame;
-    double A;
-    double m;
-    double rhoS;
-    double rhoD;
-    double LU;
-    double TU;
-    double reltol;
-    double abstol;
-    SphericalHarmonicsOptions sh;
-
-    PropagatorGve(std::vector<double> GM,
-                  std::vector<std::string> BODIES,
-                  std::string frame,
-                  double A,
-                  double m,
-                  double rhoS,
-                  double rhoD,
-                  double LU,
-                  double TU,
-                  double reltol = 1e-14,
-                  double abstol = 1e-12,
-                  std::string sh_file = "",
-                  int sh_nmax = 0,
-                  int sh_mmax = -1,
-                  std::string frame_bf = "",
-                  double sh_rho_min = 1.0)
-        : GM(GM), BODIES(BODIES), frame(frame), A(A), m(m), rhoS(rhoS), rhoD(rhoD),
-          LU(LU), TU(TU), reltol(reltol), abstol(abstol),
-          sh{sh_file, sh_nmax, sh_mmax, frame_bf, sh_rho_min} {}
-
-    std::vector<std::tuple<double, double, double, double, double, double, double>> solve_ivp(
-        double et0,
-        const std::vector<double>& tspan,
-        const std::vector<double>& y0) {
-        return ::solve_ivp_gve(
-            et0, tspan, y0, GM, BODIES, frame, A, m, rhoS, rhoD, LU, TU, reltol, abstol, sh);
-    }
-
-    std::vector<std::tuple<double,
-                           double, double, double, double, double, double,
-                           double, double, double, double, double, double,
-                           double, double, double, double, double, double,
-                           double, double, double, double, double, double,
-                           double, double, double, double, double, double,
-                           double, double, double, double, double, double,
-                           double, double, double, double, double, double>> solve_ivp_stm(
-        double et0,
-        const std::vector<double>& tspan,
-        const std::vector<double>& y0) {
-        return ::solve_ivp_stm_gve(
-            et0, tspan, y0, GM, BODIES, frame, A, m, rhoS, rhoD, LU, TU, reltol, abstol, sh);
-    }
-
-    /**
-     * Evaluates the equations of motion and their Jacobian at a single time and state.
-     *
-     * @param et0 initial epoch, in ephemeris seconds past J2000
-     * @param t time since et0, in TU
-     * @param x MEE state [p, f, g, h, k, L]
-     * @return (xdot, A) with A = d(xdot)/dx, 6x6 row-major
-     *         throws std::domain_error if p <= 0 or w <= 0, std::runtime_error on SPICE error
-     */
-    std::pair<std::vector<double>, std::vector<double>> eval_jacobian(
-        double et0,
-        double t,
-        const std::vector<double>& x) const {
-        return ::eval_jacobian_gve(et0, t, x, GM, BODIES, frame, A, m, rhoS, rhoD, LU, TU, sh);
-    }
-};
+std::vector<double> mee2cart_jacobian(const std::vector<double>& mee, double mu);
 
 }  // namespace campanella
 

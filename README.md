@@ -12,12 +12,11 @@
 │   ├── gve_mee.md                    # GVE in modified equinoctial elements and their STM
 │   └── spherical_harmonics.md        # central-body gravity field (arbitrary degree/order)
 ├── examples
-│   ├── solve_Nbody.cpp               # N-body propagation; needs SPICE kernels
-│   ├── solve_NbodySTM.cpp            # N-body state and state-transition matrix
-│   ├── solve_gve.cpp                 # N-body + SRP in MEE (GVE), checked against Cartesian
-│   ├── solve_moon_canonical.cpp      # Moon-centered propagators in canonical units vs km/s
+│   ├── solve_mee.cpp                 # third bodies + SRP in MEE (GVE), checked against Cartesian
+│   ├── solve_moon_canonical.cpp      # Moon-centred solvers in canonical units vs km/s
+│   ├── solve_rv.cpp                  # Cartesian state and STM; needs SPICE kernels
 │   ├── solve_sh.cpp                  # low lunar orbit with a GRAIL gravity field, STM check
-│   └── solve_twobody.cpp             # two-body propagation
+│   └── solve_twobody.cpp             # two-body propagation; no kernels
 ├── include
 │   └── campanella.hpp                # public C++ header
 ├── notes
@@ -27,6 +26,8 @@
 ├── scripts
 │   └── fetch_cspice.sh               # manual CSPICE download
 ├── src                               # C++ library and pybind11 bindings
+│   └── ...
+├── tests                             # GoogleTest suite (ctest)
 │   └── ...
 ├── test-python                       # pytest tests for the built module
 │   └── ...
@@ -52,11 +53,11 @@ cmake -B build-cpp -S . -DCAMPANELLA_BUILD_PYTHON=OFF -DCAMPANELLA_BUILD_CPP=ON
 cmake --build build-cpp
 ```
 
-This writes `build-cpp/lib/libcampanella.dylib` on macOS, or `libcampanella.so` on Linux. Include `include/campanella.hpp` and link that library. GSL and CSPICE are already inside it, so do not also link CSPICE or spiceypy into the same process. The examples `solve_twobody`, `solve_Nbody`, `solve_NbodySTM`, `solve_gve`, and `solve_moon_canonical` are built in `build-cpp/bin` and find the library through its rpath. `solve_Nbody`, `solve_NbodySTM`, `solve_gve`, and `solve_moon_canonical` load `lsk/naif0012.tls` and `spk/de440.bsp` from the directory in `SPICE`.
+This writes `build-cpp/lib/libcampanella.dylib` on macOS, or `libcampanella.so` on Linux. Include `include/campanella.hpp` and link that library. GSL and CSPICE are already inside it, so do not also link CSPICE or spiceypy into the same process. The examples `solve_twobody`, `solve_rv`, `solve_mee`, `solve_moon_canonical` and `solve_sh` are built in `build-cpp/bin` and find the library through its rpath. All but `solve_twobody` load their kernels from the directory in `SPICE`. Add `-DCAMPANELLA_BUILD_TESTS=ON` to build the GoogleTest suite, and run it with `ctest` from `build-cpp` (see [docs/build_library.md](docs/build_library.md#2-tests)).
 
 ```bash
 c++ -std=c++17 my_ivp.cpp \
-  -I include -I src \
+  -I include \
   -L build-cpp/lib -lcampanella \
   -Wl,-rpath,build-cpp/lib
 ```
@@ -95,10 +96,33 @@ cmake -B build -S . -DPython_EXECUTABLE=$(which python3.11)
 cmake --build build --config Release
 ```
 
+## Usage
+
+Declare the dynamics once in `SpiceParameters`, then call one of `solve_ivp_rv`, `solve_ivp_mee`, `solve_ivpstm_rv` or `solve_ivpstm_mee` (Cartesian or modified equinoctial elements, without or with the state-transition matrix):
+
+```python
+import campanella
+
+campanella.furnsh("/path/to/lsk/naif0012.tls")
+campanella.furnsh("/path/to/spk/de440.bsp")
+campanella.furnsh("/path/to/pck/gm_de440.tpc")   # GMs, unless given with GMs=[...] in km^3/s^2
+
+et0 = 740463475.5117936                           # TDB seconds past J2000
+x0 = [7000.0, 0.0, 0.0, 0.0, 7.5, 0.0]
+tspan = [0.0, 3600.0]
+naif_ids = ["399", "301", "10"]                   # the first body is the central body
+params = campanella.SpiceParameters(et0, naif_ids, include_srp=True, srp_A=10.0, srp_m=500.0)
+res = campanella.solve_ivp_rv(params, tspan, x0, atol=1e-12, rtol=1e-12)   # tolerances are optional
+res.t, res.x                                      # (N,), (N, 6)
+```
+
+The C++ interface is the same (`campanella::SpiceParameters`, `campanella::solve_ivp_rv`, ...). Code written for the former `Propagator*` classes migrates with the table in [docs/basic_usage_python.md](docs/basic_usage_python.md#migrating-from-the-propagator-classes).
+
 For further details see:
 
 - building the library: [docs/build_library.md](docs/build_library.md)
 - using the library via python: [docs/basic_usage_python.md](docs/basic_usage_python.md)
+- GVE in modified equinoctial elements: [docs/gve_mee.md](docs/gve_mee.md)
 - central-body spherical harmonics: [docs/spherical_harmonics.md](docs/spherical_harmonics.md)
 
 
@@ -154,10 +178,10 @@ Load the kernels with `campanella.furnsh(path)`. `spiceypy.furnsh()` loads a dif
   - [x] N-body + SRP in MEE (Gauss variational equations)
   - [x] N-body + spherical harmonics (Cartesian and MEE)
 - [ ] Equations of motion with state-transition matrix
-  - [ ] Two-body
+  - [x] Two-body
   - [ ] CR3BP
   - [x] N-body
-  - [ ] N-body + SRP (Cartesian)
+  - [x] N-body + SRP (Cartesian)
   - [x] N-body + SRP in MEE (Gauss variational equations)
   - [x] N-body + spherical harmonics (Cartesian and MEE)
 
@@ -171,5 +195,6 @@ Load the kernels with `campanella.furnsh(path)`. `spiceypy.furnsh()` loads a dif
 
 ### Propagation functionality
 
-- [ ] Epoch-referenced mode
+- [x] Epoch-referenced mode
+- [x] Backward propagation and output at user-defined times (`t_eval`)
 - [ ] Event detection

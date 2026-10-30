@@ -16,3 +16,7 @@ dependencies = [
 
 [tool.uv]
 package = false
+
+[tool.pytest.ini_options]
+# build directories contain third-party tests (e.g. GoogleTest's)
+testpaths = ["test-python"]
