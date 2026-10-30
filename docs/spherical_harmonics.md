@@ -1,6 +1,6 @@
 # Central-body spherical harmonics
 
-The N-body propagators (`PropagatorNbody`, its `solve_ivp_stm`, `PropagatorNbodySrp`) and the MEE propagator (`PropagatorGve`, its `solve_ivp_stm` and `eval_jacobian`) can add the gravity field of the central body `BODIES[0]`, up to an arbitrary degree and order:
+All solvers (`solve_ivp_rv`, `solve_ivp_mee`, `solve_ivpstm_rv`, `solve_ivpstm_mee`) and `eval_rv` / `eval_mee` can add the gravity field of the central body, the first of the `naif_ids` of `SpiceParameters`, up to an arbitrary degree and order:
 
 ```
 U = (GM/R) Σ_{n=2}^{nmax} Σ_{m=0}^{min(n,mmax)} (R/r)^{n+1} P̄_nm(sin φ) (C̄_nm cos mλ + S̄_nm sin mλ)
@@ -17,28 +17,27 @@ for k in ["lsk/naif0012.tls", "spk/de440.bsp",
           "pck/moon_pa_de440_200625.bpc", "fk/moon_de440_250416.tf"]:
     campanella.furnsh("/path/to/spice/" + k)
 
-prop = campanella.PropagatorNbody(
-    GM = [4.902800582147760e+03, 398600.432896939, 132712197035.766],
-    BODIES = ["MOON", "EARTH", "SUN"],
-    frame = "J2000", LU = 1.0, TU = 1.0,
+params = campanella.SpiceParameters(
+    et0, ["MOON", "EARTH", "SUN"],
+    GMs = [4.902800582147760e+03, 398600.432896939, 132712197035.766],
     sh_file = "/path/to/gggrx_1200a_sha.tab",   # PDS .tab or ICGEM .gfc
     sh_nmax = 50,                               # truncation degree
     sh_mmax = -1,                               # truncation order, -1 = min(sh_nmax, order of the file)
-    frame_bf = "MOON_PA",                       # body-fixed frame of the coefficients
+    sh_frame = "MOON_PA",                       # body-fixed frame of the coefficients
     sh_rho_min = 1.0,                           # smallest |r|/R evaluated (see below)
 )
-traj = prop.solve_ivp(et0, [0.0, 86400.0], state0)
+res = campanella.solve_ivp_rv(params, [0.0, 86400.0], state0)
 ```
 
-`PropagatorNbodySrp` and `PropagatorGve` take the same five keyword arguments after `abstol`. In C++ they are the last five constructor arguments of the same classes in `include/campanella.hpp`. `examples/solve_sh.cpp` propagates a 100 km lunar orbit and checks the STM against finite differences.
+In C++ they are the `sh_*` fields of `campanella::SpiceOptions` in `include/campanella.hpp`. `examples/solve_sh.cpp` propagates a 100 km lunar orbit and checks the STM against finite differences.
 
-The STM propagators add the gradient of the SH acceleration. In `solve_ivp_stm` it is added to the gravity gradient. In the GVE it is added to the perturbation gradient G of [gve_mee.md](gve_mee.md) §5.5.
+The STM solvers add the gradient of the SH acceleration. In `solve_ivpstm_rv` it is added to the gravity gradient. In the GVE it is added to the perturbation gradient G of [gve_mee.md](gve_mee.md) §5.5.
 
 Test and debugging helpers:
 
 - `campanella.load_spherical_harmonics(path, nmax, mmax=-1)` returns a dict: `GM` (km³/s²), `R` (km), `file_degree`, `file_order`, `mmax`, `tide_system`, and `C[n][m]`, `S[n][m]`.
 - `campanella.sh_accel_bf(path, nmax, r_bf, mmax=-1, mu=0, R=0, rho_min=1)` returns `(U, a, G)` in the body-fixed frame. By default it uses km and s with the GM and radius of the file. Give both `mu` and `R` (in your units), or neither; giving only one raises `ValueError`.
-- `campanella.sh_accel_inertial(path, nmax, frame, frame_bf, et, r, LU=1, TU=1, mmax=-1, rho_min=1)` returns `(a, G)` in an inertial frame, exactly as the propagators use them.
+- `campanella.sh_accel_inertial(path, nmax, naif_frame, sh_frame, et, r, DU=1, TU=1, mmax=-1, rho_min=1)` returns `(a, G)` in an inertial frame, exactly as the solvers use them.
 
 `G` is 3×3, flattened row-major. All three exclude the point-mass term.
 
@@ -77,7 +76,7 @@ Loaded models are cached so that repeated propagations do not re-read the file. 
 
 ## Frames
 
-The coefficients are given in a body-fixed frame. At each RHS evaluation the code does the following, with `T = pxform(frame, frame_bf, et)`:
+The coefficients are given in a body-fixed frame. At each RHS evaluation the code does the following, with `T = pxform(naif_frame, sh_frame, et)`:
 
 - r_bf = T r
 - a = Tᵀ a_bf
@@ -85,7 +84,7 @@ The coefficients are given in a body-fixed frame. At each RHS evaluation the cod
 
 The rotation rate does not enter: the STM needs ∂a/∂r at fixed t.
 
-| body | `frame_bf` | kernels |
+| body | `sh_frame` | kernels |
 |---|---|---|
 | Moon (GRAIL fields) | `MOON_PA` | `pck/moon_pa_de440_200625.bpc`, `fk/moon_de440_250416.tf` |
 | Earth (EGM2008, EGM96) | `ITRF93` | `pck/earth_latest_high_prec.bpc` (or a current `earth_*_predict.bpc` for future epochs) |
@@ -94,11 +93,11 @@ GRAIL coefficients are in the lunar **principal-axes** frame. `MOON_ME` would be
 
 ## GM, radius and units
 
-The SH sum uses the GM and the reference radius of the file. The point-mass term keeps using `GM[0]`. The coefficients are defined relative to the file's GM and radius, and they are not rescaled.
+The SH sum uses the GM and the reference radius of the file. The point-mass term keeps using `GMs[0]`. The coefficients are defined relative to the file's GM and radius, and they are not rescaled.
 
-When the field is attached, the code computes `GM[0]·LU³/TU²` and throws `ValueError` if it differs from the GM of the file by more than 1e-5 (relative). This catches a field for the wrong body, or a `GM[0]` that was not scaled to canonical units. Typical differences are about 1e-7 (DE440 vs GRGM1200A lunar GM).
+`SpiceParameters` throws `ValueError` (C++: `std::invalid_argument`) if `GMs[0]`, in km³/s², differs from the GM of the file by more than 1e-5 (relative). This catches a field for the wrong body, or GMs given in canonical units (`GMs` are always in km³/s²). Typical differences are about 1e-7 (DE440 vs GRGM1200A lunar GM).
 
-In canonical units the field uses `mu_sh = GM_file·TU²/LU³` and `R_sh = R_file/LU`. The acceleration is then in LU/TU² and the gradient in 1/TU², with no further conversion.
+In canonical units the field uses `mu_sh = GM_file·TU²/DU³` and `R_sh = R_file/DU`. The acceleration is then in DU/TU² and the gradient in 1/TU², with no further conversion.
 
 Both EGM fields are tide-free. campanella has no solid-tide model, so tide-free C̄20 is the consistent choice.
 
@@ -113,11 +112,11 @@ The code uses the fully normalized Cunningham / Montenbruck–Gill V, W recursio
 
 Positions with |r|/R < `sh_rho_min` are rejected. The default 1 means the reference sphere, inside which the series is not guaranteed to converge. A position at exactly `sh_rho_min`·R within rounding (a few ulp) is accepted.
 
-- In the propagators, a trial step below the limit is retried with a smaller step. If the trajectory itself goes below the limit, the propagation raises `ValueError` (C++: `std::domain_error`) with the time and |r|/R, rather than returning a truncated trajectory. Other integration failures behave as before: a message on stderr and a trajectory that ends early.
+- In the solvers, a trial step below the limit is retried with a smaller step. If the trajectory itself goes below the limit, the solver raises `ValueError` (C++: `std::domain_error`) with the time and |r|/R. No solver returns a truncated trajectory: other failures raise too.
 - `sh_accel_bf` and `sh_accel_inertial` raise `ValueError`.
 - For low or landing arcs, a value slightly below 1 (e.g. `sh_rho_min = 0.99`, about 17 km below the GRGM1200A sphere) can be used. The lunar surface dips to about 1728 km against R = 1738 km. Below R the series may diverge, more so at high degree, so treat such results with care.
 
-Each propagation owns its V, W workspace. `ParamsNbody` holds it by `shared_ptr`, so a copied `ParamsNbody` must not be used from another thread at the same time as the original.
+Each solver call allocates its own V, W workspace, so the solvers never share it. The `eom_*` functions use the workspace of the `SpiceParameters` they are given: a `SpiceParameters` must not be passed to them from two threads at once (a copy has its own workspace). CSPICE itself is not thread-safe.
 
 Limits:
 

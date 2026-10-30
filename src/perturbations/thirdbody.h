@@ -1,18 +1,12 @@
 #ifndef THIRDBODY_H
 #define THIRDBODY_H
 
-#include <vector>
-#include <SpiceUsr.h>          // access SPICE files
+// Third-body perturbation (direct and indirect terms) with Battin's F(q) function.
+//
+// @param r spacecraft position w.r.t. the central body
+// @param s third-body position w.r.t. the central body, in the unit of r
+// @param mu gravitational parameter of the third body, in units consistent with r
+// @param a acceleration, written
+void thirdbody_accel(const double r[3], const double s[3], double mu, double a[3]);
 
-
-std::vector<double> compute_thirdbody_perturbation(double x,
-                                                   double y,
-                                                   double z,
-                                                   double GM_i,
-                                                   ConstSpiceChar * third_body_name,
-                                                   SpiceDouble et,
-                                                   ConstSpiceChar * frame_cspice,
-                                                   ConstSpiceChar * ref_body_name,
-                                                   double LU);
-
-#endif 
+#endif

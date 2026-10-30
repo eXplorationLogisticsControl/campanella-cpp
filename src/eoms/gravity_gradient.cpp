@@ -3,7 +3,7 @@ Gravity gradient for Nbody problem
 */
 
 #include <cmath>
-#include <vector>
+#include "gravity_gradient.h"
 
 
 /**
@@ -14,7 +14,7 @@ Gravity gradient for Nbody problem
  * @param GG 3-by-3 gravity gradient matrix to be computed.
  */
 void gravity_gradient_center(
-	double rvec[],
+	const double rvec[3],
 	double mu,
 	double GG[3][3]
 ) {
@@ -25,17 +25,17 @@ void gravity_gradient_center(
 	double r2 = std::pow(r, 2);
 
 	// compute entries of the gravity gradient matrix
-	GG[0][0] = mur3 * (-1 + 3*pow(x,2)/r2);
+	GG[0][0] = mur3 * (-1 + 3*std::pow(x,2)/r2);
 	GG[0][1] = mur3 * 3*x*y/r2;
 	GG[0][2] = mur3 * 3*x*z/r2;
 
 	GG[1][0] = mur3 * 3*x*y/r2;
-	GG[1][1] = mur3 * (-1 + 3*pow(y,2)/r2);
+	GG[1][1] = mur3 * (-1 + 3*std::pow(y,2)/r2);
 	GG[1][2] = mur3 * 3*y*z/r2;
 
 	GG[2][0] = mur3 * 3*x*z/r2;
 	GG[2][1] = mur3 * 3*y*z/r2;
-	GG[2][2] = mur3 * (-1 + 3*pow(z,2)/r2);
+	GG[2][2] = mur3 * (-1 + 3*std::pow(z,2)/r2);
 }
 
 
@@ -48,17 +48,15 @@ void gravity_gradient_center(
  * @param GG 3-by-3 gravity gradient matrix to be computed.
  */
 void gravity_gradient_third_body(
-	double rvec[],
-	double svec[],
+	const double rvec[3],
+	const double svec[3],
 	double mu3,
 	double GG[3][3]) {
 	
     // Compute the difference vector dvec
-    std::vector<double> dvec = {rvec[0] - svec[0], rvec[1] - svec[1], rvec[2] - svec[2]};
+    double dvec[3] = {rvec[0] - svec[0], rvec[1] - svec[1], rvec[2] - svec[2]};
     
-    // Unpack rvec, svec, and dvec
-    double x = rvec[0], y = rvec[1], z = rvec[2];
-    double sx = svec[0], sy = svec[1], sz = svec[2];
+    // Unpack dvec
     double dx = dvec[0], dy = dvec[1], dz = dvec[2];
     
     // Compute the norm of dvec
