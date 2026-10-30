@@ -88,24 +88,12 @@ int add_perturbations(const Model& model, Workspace& ws, double t, const double 
         }
     }
 
-    // solar radiation pressure
+    // solar radiation pressure, from the Sun position of the loop above (zero if it is the center)
     if (model.idx_sun >= 0) {
-        // LEGACY (removed with the SRP fix): the Sun is the solar system barycenter
-        SpiceDouble s[3];
-        SpiceDouble lt;
-        spkgps_c(0, et, frame, center, s, &lt);
-        if (failed_c()) {
-            return capture_spice_error(ws);
-        }
-        for (int j = 0; j < 3; j++) {
-            s[j] = s[j] / model.DU;
-        }
-        const double R0 = std::sqrt(s[0]*s[0] + s[1]*s[1] + s[2]*s[2]);
+        const double* s = &ws.body_pos[3*model.idx_sun];
         const double d[3] = {r[0] - s[0], r[1] - s[1], r[2] - s[2]};
         const double R = std::sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
-        const SpiceOptions& o = model.options;
-        const double kappa = srp_legacy_kappa(R0, R, o.srp_A, o.srp_m, o.srp_rhoS, o.srp_rhoD,
-                                              model.TU, model.DU);
+        const double kappa = model.srp_k / (R*R*R);
         const double a_srp[3] = {kappa*d[0], kappa*d[1], kappa*d[2]};
         add3(a, a_srp);
         if (G) {

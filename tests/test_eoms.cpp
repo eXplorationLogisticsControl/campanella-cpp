@@ -143,6 +143,25 @@ TEST(Eoms, SunCentredSrpJacobian) {
     EXPECT_LE(mee_jacobian_error(p, 0.0, campanella::cart2mee(x, p.mus()[0])), 1e-6);
 }
 
+TEST(Eoms, HeliocentricSrpMagnitude) {
+    // the Sun as central body: a_srp = (P0/c) Cr (A/m) (AU/r)^2 r/|r|, radial and outward
+    const double gm_sun = 1.3271244004127942e11;
+    SpiceOptions o = with_gms({gm_sun});
+    add_srp(o);
+    const SpiceParameters p(ET0, {"SUN"}, o);
+    const SpiceParameters p_grav(ET0, {"SUN"}, with_gms({gm_sun}));
+    const std::vector<double> x = {1.2e8, -0.5e8, 0.3e8, 10.0, 25.0, 1.0};
+    const campanella::EomEval e = campanella::eval_rv(p, 0.0, x), g = campanella::eval_rv(p_grav, 0.0, x);
+    const double r = std::sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
+    const double Cr = 1 + o.srp_rhoS + 5 * o.srp_rhoD / 3;
+    const double au = 149597870.7;
+    const double a_mag = 1367.0 / 299792458.0 * Cr * o.srp_A / o.srp_m / 1e3 * (au / r) * (au / r);
+    for (int i = 0; i < 3; i++) {
+        // difference of two ~6e-3 km/s^2 accelerations: cancellation error ~1e-13 / 1e-10
+        EXPECT_NEAR(e.xdot[3 + i] - g.xdot[3 + i], a_mag * x[i] / r, 1e-9 * a_mag) << i;
+    }
+}
+
 TEST(Eoms, EomFunctionsAgreeWithEval) {
     REQUIRE_KERNELS();
     SpiceParameters p = moon_params(FORCE_CASES[3]);

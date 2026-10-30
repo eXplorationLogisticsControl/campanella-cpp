@@ -24,9 +24,12 @@ SRP = dict(include_srp=True, srp_A=34.675, srp_m=1850.0, srp_rhoS=0.9, srp_rhoD=
 TSPAN = [0.0, 20 * 86400.0]
 X0_EXPECT = [5778.190022842265, -0.34651609849537257, 0.8514048990211349,
              1.9784209071365653, 0.6178109804659669, -1.184288478833202]
-# Reference final MEE from a DOP853 run at rtol 3e-14 (docs/gve_mee.md 7.0); sanity check only
-XF_SRP_DOP853 = [5178.768353783176, 0.88095964643724, -0.28930277538858457,
-                 0.24069918804141774, -1.2806778961781318, 21.717565975939248]
+# Reference final MEE with SRP. The SRP model was corrected (Sun position instead of the solar
+# system barycenter, flux scaled from 1 AU), so this is no longer the DOP853 value of docs/gve_mee.md
+# 7.0: it is the solve_ivp_mee result, confirmed by an independent RK4 + spiceypy Cartesian
+# transcription (|dr| = 1.1e-5 km at h = 15 s, converging at 4th order). Sanity check only.
+XF_SRP_REF = [5178.576789928225, 0.8809219032708616, -0.28942480229551987,
+              0.24055734575159027, -1.2805787538758713, 21.717427888269437]
 XF_NBODY_DOP853 = [5177.094816314719, 0.8795907367139397, -0.29345826808033154,
                    0.23584006097182486, -1.2775753822790343, 21.712831372236334]
 # C++ Cartesian N-body reference final state (examples/solve_rv.cpp)
@@ -220,8 +223,7 @@ def test_gve_vs_cartesian_srp():
     xf = final_row(campanella.solve_ivp_mee(params, TSPAN, x0), TSPAN[1])
     rv_f = final_row(campanella.solve_ivp_rv(params, TSPAN, STATE0), TSPAN[1])
     _compare_gve_cartesian(xf, rv_f)
-    # sanity check against the independent DOP853 transcription
-    assert_mee_close(xf, XF_SRP_DOP853, 1e-8, "GVE vs DOP853 reference")
+    assert_mee_close(xf, XF_SRP_REF, 1e-8, "GVE vs SRP reference")
 
 
 def test_gve_vs_cartesian_nbody():

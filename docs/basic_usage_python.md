@@ -65,7 +65,7 @@ campanella.SpiceParameters(
 - **Gravitational parameters.** `GMs` are always in km^3/s^2, also in canonical units. When `GMs` is omitted, each body's `GM` is read from the kernel pool, for example `gm_de440.tpc`. A body without a GM raises `ValueError`.
 - **Frame.** `naif_frame` must be an inertial frame. A rotating frame such as `IAU_EARTH` raises `ValueError`.
 - **Aberration correction.** `abcorr` must be `"NONE"`. The force model uses geometric positions.
-- **SRP.** `include_srp=True` requires the Sun (`"10"` or `"SUN"`) among `naif_ids`. It may be the central body. `srp_A` is the area in m^2, `srp_m` the mass in kg, and `srp_rhoS` and `srp_rhoD` the reflection coefficients. SRP has no shadow model. To use SRP without the Sun's gravity, list the Sun with a GM of 0.
+- **SRP.** `include_srp=True` requires the Sun (`"10"` or `"SUN"`) among `naif_ids`. It may be the central body. `srp_A` is the area in m^2, `srp_m` the mass in kg, and `srp_rhoS` and `srp_rhoD` the reflection coefficients. The acceleration is `(P0/c) Cr (A/m) (AU/|d|)^2 d/|d|`, with `d` the position from the Sun to the spacecraft, `Cr = 1 + rhoS + 5 rhoD / 3`, and `P0 = 1367 W/m^2` the solar flux at 1 AU. SRP has no shadow model. To use SRP without the Sun's gravity, list the Sun with a GM of 0.
 - **Gravity field of the central body.** `sh_file` turns it on. See [the gravity-field section](#central-body-gravity-field-spherical-harmonics).
 
 The object is immutable after construction. Its inputs and derived quantities are read-only properties, for example `params.GMs`, `params.mus`, `params.DU`, `params.TU`, `params.VU`, `params.naif_codes` and `params.include_srp`.
@@ -182,5 +182,6 @@ Give `sh_file`, `sh_nmax`, `sh_mmax`, `sh_frame` and `sh_rho_min` to `SpiceParam
 | `reltol`, `abstol` | `rtol`, `atol` (keyword-only), and `t_eval` |
 | list of tuples `(t, x..., stm...)` | `res.t (N,)`, `res.x (N, 6)`, `res.stm (N, 6, 6)` |
 | `A = 0` turns SRP off (GVE only) | `include_srp=False`, for both coordinate sets; the Cartesian STM now includes SRP |
+| SRP from the solar system barycenter, with the flux scaled by the central body–Sun distance | SRP from the Sun, with the flux scaled from 1 AU (near 1 AU the SRP acceleration changes by a few percent) |
 | `tf < t0` rejected; a failed integration printed to stderr and returned a truncated trajectory | backward propagation supported; failures raise |
 | `sh_accel_inertial(path, nmax, frame, frame_bf, ..., LU, TU)` | `sh_accel_inertial(path, nmax, naif_frame, sh_frame, ..., DU, TU)` |

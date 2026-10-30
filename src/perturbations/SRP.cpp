@@ -7,29 +7,31 @@
 
 namespace {
 
-//SRP constants
-const double SRP_P0 = 1367;       // [W/m^2]
-const double SRP_C = 299792458;   // [m/s]
+// SRP constants
+const double SRP_P0 = 1367;              // solar flux at 1 AU [W/m^2]
+const double SRP_C = 299792458;          // speed of light [m/s]
+const double SRP_AU = 149597870.7;       // astronomical unit [km]
 
 }  // namespace
 
 /**
- * SRP magnitude factor kappa, such that a_SRP = kappa * (r - s)
+ * SRP coefficient K, such that a_SRP = K d / |d|^3 with d the position from the Sun to the spacecraft
  *
- * @param R0 distance from reference body to sun, in DU
- * @param R distance from sun to spacecraft, in DU
+ * At 1 AU the acceleration is (P0 / c) Cr A / m, in m/s^2; K converts it to DU/TU^2 and moves the
+ * 1/|d|^2 scaling into DU.
+ *
  * @param A surface area of spacecraft, in m^2
  * @param m mass of spacecraft, in kg
- * @param rhoS reflection rate of spacecraft
- * @param rhoD scattering rate of spacecraft
- * @param TU time unit, in s
+ * @param rhoS specular reflection coefficient
+ * @param rhoD diffuse reflection coefficient
  * @param DU distance unit, in km
+ * @param TU time unit, in s
+ * @return K, in DU^3/TU^2
  */
-double srp_legacy_kappa(double R0, double R, double A, double m, double rhoS, double rhoD,
-                        double TU, double DU) {
-    double P = SRP_P0*(R0/R)*(R0/R)/SRP_C;
+double srp_coefficient(double A, double m, double rhoS, double rhoD, double DU, double TU) {
     double Cr = 1 + rhoS + 5 * rhoD / 3;
-    return P*Cr*A/R/m / (1e3 * DU/(TU*TU));
+    double au = SRP_AU / DU;
+    return SRP_P0/SRP_C * Cr * A/m * au*au / (1e3 * DU/(TU*TU));
 }
 
 

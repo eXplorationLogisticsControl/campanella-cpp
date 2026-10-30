@@ -14,6 +14,7 @@
 
 #include "campanella.hpp"
 #include "model.h"
+#include "perturbations/SRP.h"
 
 namespace campanella {
 namespace detail {
@@ -191,6 +192,9 @@ std::shared_ptr<const Model> build_model(double et0, std::vector<std::string> na
     model->TU = TU;
     model->VU = VU;
     model->idx_sun = idx_sun;
+    if (idx_sun >= 0) {
+        model->srp_k = srp_coefficient(options.srp_A, options.srp_m, options.srp_rhoS, options.srp_rhoD, DU, TU);
+    }
     model->options = std::move(options);
     return model;
 }

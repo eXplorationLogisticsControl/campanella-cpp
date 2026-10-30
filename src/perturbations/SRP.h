@@ -1,14 +1,14 @@
 #ifndef SRP_H
 #define SRP_H
 
-// Solar radiation pressure (SRP), cannonball-like model with a = kappa (r - s), s the Sun position.
+// Solar radiation pressure (SRP), cannonball-like model:
+//   a = K d / |d|^3,  d = r - r_sun,  K = (P0 / c) Cr (A / m) AU^2,  Cr = 1 + rhoS + 5 rhoD / 3
+// with P0 the solar flux at 1 AU. No shadow.
 
-// LEGACY (removed with the SRP fix): kappa with the flux scaled by R0 = |s|, the distance from the
-// central body to the Sun, rather than 1 AU.
-double srp_legacy_kappa(double R0, double R, double A, double m, double rhoS, double rhoD,
-                        double TU, double DU);
+// K in DU^3/TU^2, for A in m^2, m in kg, DU in km and TU in s
+double srp_coefficient(double A, double m, double rhoS, double rhoD, double DU, double TU);
 
-// Gradient d(a_SRP)/dr = kappa (I - 3 d d^T / |d|^2), d = r - s, for a = kappa d
+// Gradient d(a_SRP)/dr = kappa (I - 3 d d^T / |d|^2), for a = kappa d (kappa = K / |d|^3)
 void srp_gradient(const double d[3], double kappa, double GG[3][3]);
 
 #endif

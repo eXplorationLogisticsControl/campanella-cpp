@@ -21,6 +21,11 @@ TWOBODY_EXPECT = [-18205.698468519975, 26479.25761849232, -38615.225993310676,
                   0.01263483050054705, 0.1635690404557372, -0.19163703441809382]
 RV_NBODY_EXPECT = [10171.343017143072, 33674.15294325228, -60877.5267967639,
                    0.013967106146233203, -0.0805131196626756, 0.0033270015062299776]
+# with SRP (SRP dict below); confirmed by an independent RK4 + spiceypy transcription to 1.1e-5 km
+RV_SRP_EXPECT = [10265.7677192918, 33657.38156810862, -60889.03206439558,
+                 0.014176756803175221, -0.08047039542453092, 0.003449062130405538]
+# SRP constants of the model: solar flux at 1 AU, speed of light, astronomical unit
+SRP_P0, SRP_C, AU_KM = 1367.0, 299792458.0, 149597870.7
 
 
 def moon_params(**kw):
@@ -103,11 +108,52 @@ def test_srp_stm_vs_fd():
     assert err_nosrp > 10 * err
 
 
-def test_srp_moves_trajectory():
+def test_srp_reference_and_effect():
     furnsh_kernels()
     xf = final_row(campanella.solve_ivp_rv(moon_params(**SRP), TSPAN, STATE0), TSPAN[1])
+    np.testing.assert_allclose(xf, RV_SRP_EXPECT, rtol=1e-12)
     xf_nbody = final_row(campanella.solve_ivp_rv(moon_params(), TSPAN, STATE0), TSPAN[1])
     assert np.linalg.norm(xf[:3] - xf_nbody[:3]) > 10.0
+
+
+@pytest.mark.parametrize("rhoD", [0.0, 0.3])
+def test_srp_acceleration_independent(rhoD):
+    """SRP acceleration against an independent evaluation with spiceypy's own CSPICE:
+    a = (P0/c) Cr (A/m) (AU/|d|)^2 d/|d|, d = r - r_sun, Cr = 1 + rhoS + 5 rhoD / 3"""
+    import os
+    import spiceypy
+    furnsh_kernels()
+    spice_dir = os.environ["SPICE"]
+    spiceypy.furnsh(os.path.join(spice_dir, "lsk", "naif0012.tls"))
+    spiceypy.furnsh(os.path.join(spice_dir, "spk", "de440.bsp"))
+    srp = dict(SRP, srp_rhoD=rhoD)
+    for DU in [None, 3000.0]:
+        p_srp = moon_params(**srp, DU=DU)
+        p_grav = moon_params(DU=DU)
+        t = 0.7 * 86400.0 / p_srp.TU
+        x = np.array(STATE0) / np.array([p_srp.DU] * 3 + [p_srp.VU] * 3)
+        a = (campanella.eval_rv(p_srp, t, list(x))[0] - campanella.eval_rv(p_grav, t, list(x))[0])[3:]
+        a_kms2 = a * p_srp.DU / p_srp.TU ** 2
+        s = np.array(spiceypy.spkpos("SUN", ET0 + 0.7 * 86400.0, "J2000", "NONE", "MOON")[0])
+        d = np.array(STATE0[:3]) - s
+        Cr = 1 + SRP["srp_rhoS"] + 5 * rhoD / 3
+        a_ref = SRP_P0 / SRP_C * Cr * SRP["srp_A"] / SRP["srp_m"] / 1e3 * (AU_KM / np.linalg.norm(d)) ** 2 \
+            * d / np.linalg.norm(d)
+        np.testing.assert_allclose(a_kms2, a_ref, rtol=1e-9)
+
+
+def test_heliocentric_srp():
+    """Sun as the central body: SRP is radial, outward, and K / r^2 in magnitude"""
+    gm_sun = 1.3271244004127942e11
+    srp = dict(include_srp=True, srp_A=10.0, srp_m=500.0, srp_rhoS=0.2)
+    p_srp = campanella.SpiceParameters(ET0, ["SUN"], GMs=[gm_sun], **srp)
+    p_grav = campanella.SpiceParameters(ET0, ["SUN"], GMs=[gm_sun])
+    x = [1.2e8, -0.5e8, 0.3e8, 10.0, 25.0, 1.0]
+    a = (campanella.eval_rv(p_srp, 0.0, x)[0] - campanella.eval_rv(p_grav, 0.0, x)[0])[3:]
+    r = np.array(x[:3])
+    a_ref = SRP_P0 / SRP_C * 1.2 * 10.0 / 500.0 / 1e3 * (AU_KM / np.linalg.norm(r)) ** 2 * r / np.linalg.norm(r)
+    # a is the difference of two ~6e-3 km/s^2 accelerations: ~1e-13 / 1e-10 of cancellation error
+    np.testing.assert_allclose(a, a_ref, rtol=1e-9)
 
 
 def test_canonical_vs_dimensional_jupiter():

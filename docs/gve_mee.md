@@ -360,21 +360,15 @@ This is exactly `gravity_gradient_third_body(rvec, svec, GM[i], GG)`:
 - svec is the body position already divided by DU, as passed to `thirdbody_accel`.
 - The Cartesian STM (`eomstm_rv`) uses the same gradient.
 
-**SRP.** `compute_SRP` computes:
-- d = r − s, where s = position of "SOLAR SYSTEM BARYCENTER" relative to `BODIES[0]`, divided by LU
-- R = ‖d‖ and R₀ = ‖s‖
-- P = P₀ (R₀/R)² / c
+**SRP.** `add_perturbations` (`src/eoms/forces.cpp`) computes, with the SRP constants of `src/perturbations/SRP.cpp`:
+- d = r − s, where s = position of the Sun (NAIF 10, which must be listed in `naif_ids`) relative to the central body, divided by DU; s = 0 if the Sun is the central body
+- R = ‖d‖
 - C_r = 1 + ρ_S + 5ρ_D/3
-- κ = P C_r S / (R m) / (1e3 · LU/TU²), named `srp_magnitude`
-- a_srp = κ d
+- K = (P₀/c) C_r (S/m) (AU/DU)² / (1e3 · DU/TU²), with P₀ = 1367 W/m² the solar flux at 1 AU and AU = 149597870.7 km (`srp_coefficient`, computed once in `SpiceParameters`)
+- κ = K / R³
+- a_srp = κ d = K d / R³
 
-Hence a_srp = K d / R³ with
-
-```
-K = P₀ R₀² C_r S / ( c m · 1e3 · LU / TU² )      (independent of r: R₀ depends only on t)
-```
-
-and the exact gradient is
+At 1 AU this is (P₀/c) C_r S/m in m/s², converted to DU/TU². K does not depend on r or t, and the exact gradient is
 
 ```
 G_srp = ∂a_srp/∂r = K ( I₃/R³ − 3 d dᵀ / R⁵ ) = κ ( I₃ − 3 d dᵀ / R² )
@@ -382,9 +376,9 @@ G_srp = ∂a_srp/∂r = K ( I₃/R³ − 3 d dᵀ / R⁵ ) = κ ( I₃ − 3 d d
 
 Notes:
 - This is a repulsive inverse-square field: G_srp is trace-free, with the opposite sign to a point-mass gradient.
-- G_srp needs d (or s). `compute_SRP` therefore returns the scaled Sun position after the acceleration, `{ax, ay, az, xs, ys, zs}`, mirroring `compute_thirdbody_perturbation`. Existing callers use only indices 0..2.
-- `srp_gradient` (`src/perturbations/SRP.cpp`) takes s, forms d = r − s and R = ‖d‖, and recomputes κ with the same helper as `compute_SRP`.
+- `srp_gradient` (`src/perturbations/SRP.cpp`) takes d and κ. The Sun position is the one already queried for its third-body term, so SRP costs no extra ephemeris call.
 - There is no shadow model, which matches the Cartesian model.
+- Before the unified interface, the model took s as the solar system barycenter and scaled the flux by (R₀/R)² with R₀ = ‖s‖ instead of (AU/R)². The SRP results of section 6 and the DOP853 reference of 7.0 were computed with that model.
 
 **Central-body spherical harmonics.** If a gravity field is given (`sh_file`, see [spherical_harmonics.md](spherical_harmonics.md)), `sh_perturbation` adds the acceleration of degrees 2..nmax to a_I. Its gradient is
 
@@ -404,11 +398,10 @@ where G_bf is the body-fixed gradient from the V, W recursion.
 3. Set et = et0 + t·TU. Loop over the bodies i = 1..N−1:
    - a_I += res[0..2]
    - G += G_i
-   - `if (failed_c()) { reset_c(); return GSL_FAILURE; }`
-4. SRP:
+   - on a SPICE error, save NAIF's message, `reset_c()`, and return `GSL_EBADFUNC`
+4. SRP, if `include_srp`:
    - a_I += a_srp
    - G += G_srp
-   - Recommendation: skip the SRP call entirely when S = 0. The result is bit-identical (κ = 0) and saves an `spkpos_c` call.
    - Central-body spherical harmonics, if given: a_I += a_sh and G += G_sh.
 5. Compute a_rtn = [r̂·a_I, θ̂·a_I, n̂·a_I] and ẋ = b + B a_rtn.
 6. For the STM version only:
@@ -539,12 +532,12 @@ Reference values from the Python transcription (float64):
   x0 = [5778.190022842265, -0.34651609849537257, 0.8514048990211349,
         1.9784209071365653, 0.6178109804659669, -1.184288478833202]
   ```
-- **Final MEE with SRP.** DOP853 at rtol 3e-14. Expect agreement to about 1e-8 relative on p and 1e-10 on the others with GSL rk8pd. Use these values only as a sanity check, not as the primary assertion:
+- **Final MEE with SRP.** Use these values only as a sanity check, not as the primary assertion. With the corrected SRP model (above), the reference is the `solve_ivp_mee` result, confirmed by an independent RK4 + spiceypy Cartesian transcription to 1.1e-5 km (4th-order convergence):
   ```
-  [5178.768353783176, 0.88095964643724, -0.28930277538858457,
-   0.24069918804141774, -1.2806778961781318, 21.717565975939248]
+  [5178.576789928225, 0.8809219032708616, -0.28942480229551987,
+   0.24055734575159027, -1.2805787538758713, 21.717427888269437]
   ```
-  L travels 3.64 revolutions.
+  The DOP853 value at rtol 3e-14 with the former SRP model was `[5178.768353783176, 0.88095964643724, -0.28930277538858457, 0.24069918804141774, -1.2806778961781318, 21.717565975939248]`. L travels 3.64 revolutions.
 - **Final MEE without SRP:**
   ```
   [5177.094816314719, 0.8795907367139397, -0.29345826808033154,

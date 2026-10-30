@@ -62,6 +62,21 @@ TEST(SolveIvp, NbodyReference) {
     }
 }
 
+TEST(SolveIvp, SrpReference) {
+    // SRP with rhoD = 0; confirmed by an independent RK4 + spiceypy transcription to 1.1e-5 km
+    REQUIRE_KERNELS();
+    SpiceOptions o = with_gms(GM_LIST);
+    add_srp(o);
+    o.srp_rhoD = 0.0;
+    const IvpResult r = campanella::solve_ivp_rv(SpiceParameters(ET0, BODIES, o), {0.0, TF}, STATE0);
+    const std::vector<double> expect = {10265.7677192918, 33657.38156810862, -60889.03206439558,
+                                        0.014176756803175221, -0.08047039542453092, 0.003449062130405538};
+    const std::vector<double> xf = final_state(r);
+    for (int i = 0; i < 6; i++) {
+        EXPECT_NEAR(xf[i], expect[i], 1e-12 * std::abs(expect[i])) << i;
+    }
+}
+
 TEST(SolveIvp, RvAndMeeAgreeForEveryForceModel) {
     REQUIRE_KERNELS();
     for (int c = 0; c < 4; c++) {
@@ -261,6 +276,32 @@ TEST(SolveIvp, CanonicalMeeMatchesDimensional) {
     const std::vector<double> rv_c = final_state(campanella::solve_ivp_rv(canon, {0.0, TF / TU}, x0c));
     const std::vector<double> rv_m = campanella::mee2cart(xf_c, 1.0);
     EXPECT_LE(norm3_diff(rv_m, rv_c, 0) * DU, 1e-5);
+}
+
+TEST(SolveIvp, HeliocentricWithSrpAndThirdBody) {
+    // the Sun as central body with SRP (rhoD != 0) and the Earth: MEE and Cartesian agree, and
+    // SRP moves the orbit
+    REQUIRE_KERNELS();
+    SpiceOptions o = with_gms({1.3271244004127942e11, 398600.435507});
+    add_srp(o);
+    o.srp_A = 100.0;
+    o.srp_m = 10.0;
+    o.DU = 149597870.7;
+    const SpiceParameters p(ET0, {"SUN", "EARTH"}, o);
+    SpiceOptions o_grav = o;
+    o_grav.include_srp = false;
+    const SpiceParameters p_grav(ET0, {"SUN", "EARTH"}, o_grav);
+    const std::vector<double> x0 = {1.02, 0.01, 0.0, -0.02, 0.98, 0.01};
+    const double tf = 1.0;   // TU, about 58 days
+    const IvpResult rv = campanella::solve_ivpstm_rv(p, {0.0, tf}, x0);
+    const IvpResult mee = campanella::solve_ivpstm_mee(p, {0.0, tf}, campanella::cart2mee(x0, 1.0));
+    EXPECT_LE(norm3_diff(campanella::mee2cart(final_state(mee), 1.0), final_state(rv), 0) * o.DU.value(), 1e-2);
+    const IvpResult grav = campanella::solve_ivp_rv(p_grav, {0.0, tf}, x0);
+    EXPECT_GT(norm3_diff(final_state(grav), final_state(rv), 0) * o.DU.value(), 1e3);
+    const std::vector<double> Phi_fd = jacobian_fd(
+        [&](const std::vector<double>& x) { return final_state(campanella::solve_ivp_rv(p, {0.0, tf}, x)); },
+        x0, {1e-7, 1e-7, 1e-7, 1e-7, 1e-7, 1e-7});
+    EXPECT_LE(row_normalised_error(final_stm(rv), Phi_fd), 1e-6);
 }
 
 TEST(SolveIvp, InvalidArguments) {
