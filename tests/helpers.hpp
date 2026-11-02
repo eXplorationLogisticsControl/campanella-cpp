@@ -12,6 +12,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <functional>
+#include <limits>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -148,6 +150,130 @@ inline std::vector<double> jacobian_fd(const std::function<std::vector<double>(c
         }
     }
     return J;
+}
+
+// Last row of r.x, for n states
+inline std::vector<double> final_state_n(const campanella::IvpResult& r, int n) {
+    return std::vector<double>(r.x.end() - n, r.x.end());
+}
+
+// Last Phi of r.stm, n x n row-major
+inline std::vector<double> final_stm_n(const campanella::IvpResult& r, int n) {
+    return std::vector<double>(r.stm.end() - n * n, r.stm.end());
+}
+
+// Last Psi of r.stm_u, nx x nu row-major
+inline std::vector<double> final_stm_u(const campanella::IvpResult& r, int nx, int nu) {
+    return std::vector<double>(r.stm_u.end() - nx * nu, r.stm_u.end());
+}
+
+// Central differences of f: R^n -> R^m with steps h (n), as an m x n row-major matrix
+inline std::vector<double> jacobian_fd_n(const std::function<std::vector<double>(const std::vector<double>&)>& f,
+                                         const std::vector<double>& x, const std::vector<double>& h) {
+    const size_t n = x.size();
+    std::vector<double> J;
+    size_t m = 0;
+    for (size_t j = 0; j < n; j++) {
+        std::vector<double> xp = x, xm = x;
+        xp[j] += h[j];
+        xm[j] -= h[j];
+        const std::vector<double> fp = f(xp), fm = f(xm);
+        if (j == 0) {
+            m = fp.size();
+            J.resize(m * n);
+        }
+        for (size_t i = 0; i < m; i++) {
+            J[n * i + j] = (fp[i] - fm[i]) / (xp[j] - xm[j]);
+        }
+    }
+    return J;
+}
+
+enum class ErrorMode { row, col };
+
+/**
+ * Normalised error of the rows x cols row-major matrix M against the reference R, after scaling both
+ * as diag(1/row_scale) M diag(col_scale). An empty scale means ones.
+ *
+ * mode row: max over rows of max_j |dM_ij| / max_j |R_ij|; mode col: the same over columns.
+ * A row (column) whose scaled reference is at most abs_floor has nothing to normalise by, and is
+ * checked absolutely: it contributes 0 if its scaled difference is at most abs_floor, inf otherwise.
+ *
+ * @return the error; inf if any value is not finite, or if a size is inconsistent
+ */
+inline double matrix_error(const std::vector<double>& M, const std::vector<double>& R, int rows, int cols,
+                           const std::vector<double>& row_scale, const std::vector<double>& col_scale,
+                           double abs_floor, ErrorMode mode = ErrorMode::row) {
+    const double inf = std::numeric_limits<double>::infinity();
+    const size_t size = static_cast<size_t>(rows) * static_cast<size_t>(cols);
+    if (M.size() != size || R.size() != size
+        || (!row_scale.empty() && row_scale.size() != static_cast<size_t>(rows))
+        || (!col_scale.empty() && col_scale.size() != static_cast<size_t>(cols))) {
+        return inf;
+    }
+    const bool by_row = (mode == ErrorMode::row);
+    std::vector<double> diff(by_row ? rows : cols, 0.0), ref(by_row ? rows : cols, 0.0);
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            const double s = (col_scale.empty() ? 1.0 : col_scale[j]) / (row_scale.empty() ? 1.0 : row_scale[i]);
+            const double m = M[cols * i + j] * s;
+            const double r = R[cols * i + j] * s;
+            if (!std::isfinite(m) || !std::isfinite(r)) {
+                return inf;
+            }
+            const int line = by_row ? i : j;
+            diff[line] = std::max(diff[line], std::abs(m - r));
+            ref[line] = std::max(ref[line], std::abs(r));
+        }
+    }
+    double err = 0.0;
+    for (size_t line = 0; line < diff.size(); line++) {
+        if (ref[line] > abs_floor) {
+            err = std::max(err, diff[line] / ref[line]);
+        } else if (diff[line] > abs_floor) {
+            return inf;
+        }
+    }
+    return err;
+}
+
+// Solve A X = B with partial pivoting, for A n x n and B n x m, both row-major; X is n x m row-major.
+// Throws std::runtime_error if A is singular.
+inline std::vector<double> solve_linear(std::vector<double> A, std::vector<double> B, int n, int m) {
+    for (int c = 0; c < n; c++) {
+        int pivot = c;
+        for (int i = c + 1; i < n; i++) {
+            if (std::abs(A[n * i + c]) > std::abs(A[n * pivot + c])) {
+                pivot = i;
+            }
+        }
+        if (A[n * pivot + c] == 0.0) {
+            throw std::runtime_error("solve_linear: singular matrix");
+        }
+        if (pivot != c) {
+            std::swap_ranges(A.begin() + n * c, A.begin() + n * (c + 1), A.begin() + n * pivot);
+            std::swap_ranges(B.begin() + m * c, B.begin() + m * (c + 1), B.begin() + m * pivot);
+        }
+        for (int i = c + 1; i < n; i++) {
+            const double factor = A[n * i + c] / A[n * c + c];
+            for (int j = c; j < n; j++) {
+                A[n * i + j] -= factor * A[n * c + j];
+            }
+            for (int j = 0; j < m; j++) {
+                B[m * i + j] -= factor * B[m * c + j];
+            }
+        }
+    }
+    for (int i = n - 1; i >= 0; i--) {
+        for (int j = 0; j < m; j++) {
+            double sum = B[m * i + j];
+            for (int l = i + 1; l < n; l++) {
+                sum -= A[n * i + l] * B[m * l + j];
+            }
+            B[m * i + j] = sum / A[n * i + i];
+        }
+    }
+    return B;
 }
 
 inline double norm3_diff(const std::vector<double>& a, const std::vector<double>& b, int offset) {

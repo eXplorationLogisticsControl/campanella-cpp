@@ -82,6 +82,107 @@ py::tuple eval_tuple(const EomEval& e) {
     return py::make_tuple(xdot, A);
 }
 
+using SolverZoh = IvpResult (*)(const SpiceParameters&, const ThrustOptions&, const std::vector<double>&,
+                                const std::vector<double>&, const std::vector<double>&, const IvpOptions&);
+
+// Runs between integration steps with the GIL held: lets Ctrl-C (or any Python signal handler) stop an
+// rvm or meem integration. The exception unwinds integrate() only, never a GSL frame.
+void check_python_signals() {
+    if (PyErr_CheckSignals() != 0) {
+        throw py::error_already_set();
+    }
+}
+
+// Python signature solve(params, thrust, tspan, x0, u, *, atol, rtol, t_eval, max_steps)
+void def_solver_zoh(py::module_& m, const char* name, SolverZoh solver, const char* doc) {
+    m.def(name,
+          [solver](const SpiceParameters& params, const ThrustOptions& thrust, const std::vector<double>& tspan,
+                   const std::vector<double>& x0, const std::vector<double>& u, double atol, double rtol,
+                   std::optional<std::vector<double>> t_eval, long long max_steps) {
+              IvpOptions options;
+              options.atol = atol;
+              options.rtol = rtol;
+              if (t_eval) {
+                  options.t_eval = std::move(*t_eval);
+              }
+              options.max_steps = max_steps;
+              options.poll = &check_python_signals;
+              return solver(params, thrust, tspan, x0, u, options);
+          },
+          py::arg("params"), py::arg("thrust"), py::arg("tspan"), py::arg("x0"), py::arg("u"), py::kw_only(),
+          py::arg("atol") = IvpOptions{}.atol, py::arg("rtol") = IvpOptions{}.rtol,
+          py::arg("t_eval") = py::none(), py::arg("max_steps") = IvpOptions{}.max_steps, doc);
+}
+
+using RefArray = py::array_t<double, py::array::c_style | py::array::forcecast>;
+
+// A 2-D array with the given number of columns, flattened row-major. The number of rows is checked by
+// propagate_zoh_*, against times.
+std::vector<double> flatten_rows(const RefArray& a, py::ssize_t cols, const char* name, const char* who) {
+    if (a.ndim() != 2 || a.shape(1) != cols) {
+        std::ostringstream msg;
+        msg << who << ": " << name << " must be a 2-D array with " << cols << " columns, got shape (";
+        for (py::ssize_t i = 0; i < a.ndim(); i++) {
+            msg << (i ? ", " : "") << a.shape(i);
+        }
+        msg << ")";
+        throw std::invalid_argument(msg.str());
+    }
+    return std::vector<double>(a.data(), a.data() + a.size());
+}
+
+using Propagate = ZohLinearization (*)(const SpiceParameters&, const ThrustOptions&, const std::vector<double>&,
+                                       const std::vector<double>&, const std::vector<double>&, const IvpOptions&);
+
+// Python signature propagate(params, thrust, times, x_ref, u_ref, *, atol, rtol, max_steps)
+void def_propagate_zoh(py::module_& m, const char* name, Propagate propagate, const char* doc) {
+    m.def(name,
+          [propagate, name](const SpiceParameters& params, const ThrustOptions& thrust,
+                            const std::vector<double>& times, const RefArray& x_ref, const RefArray& u_ref,
+                            double atol, double rtol, long long max_steps) {
+              const std::vector<double> x = flatten_rows(x_ref, 7, "x_ref", name);
+              const std::vector<double> u = flatten_rows(u_ref, 4, "u_ref", name);
+              IvpOptions options;
+              options.atol = atol;
+              options.rtol = rtol;
+              options.max_steps = max_steps;
+              options.poll = &check_python_signals;
+              return propagate(params, thrust, times, x, u, options);
+          },
+          py::arg("params"), py::arg("thrust"), py::arg("times"), py::arg("x_ref"), py::arg("u_ref"), py::kw_only(),
+          py::arg("atol") = IvpOptions{}.atol, py::arg("rtol") = IvpOptions{}.rtol,
+          py::arg("max_steps") = IvpOptions{}.max_steps, doc);
+}
+
+// Python signature eom(params, thrust, t, x, u) -> xdot; raises like eval_* on a failure.
+// The ControlledParameters is local to the call, and is not exposed to Python.
+void def_eom_zoh(py::module_& m, const char* name, Eom eom, size_t dim, const char* doc) {
+    m.def(name,
+          [eom, dim, name](const SpiceParameters& params, const ThrustOptions& thrust, double t,
+                           const std::vector<double>& x, const std::vector<double>& u) {
+              detail::make_control(params, thrust, u, name);   // so that errors name this function
+              if (x.size() != dim) {
+                  throw std::invalid_argument(std::string(name) + ": x must have length " + std::to_string(dim));
+              }
+              const ControlledParameters cp(params, thrust, u);
+              py::array_t<double> xdot(std::vector<py::ssize_t>{static_cast<py::ssize_t>(dim)});
+              int status = eom(t, x.data(), xdot.mutable_data(), const_cast<ControlledParameters*>(&cp));
+              if (status != detail::RHS_SUCCESS) {
+                  detail::throw_fault(detail::Access::model(params), detail::Access::workspace(params),
+                                      status, t, name);
+              }
+              return xdot;
+          },
+          py::arg("params"), py::arg("thrust"), py::arg("t"), py::arg("x"), py::arg("u"), doc);
+}
+
+py::tuple eval_tuple_zoh(const EomEvalControl& e) {
+    py::array_t<double> xdot(std::vector<py::ssize_t>{7}, e.xdot.data());
+    py::array_t<double> A(std::vector<py::ssize_t>{7, 7}, e.A.data());
+    py::array_t<double> B(std::vector<py::ssize_t>{7, 4}, e.B.data());
+    return py::make_tuple(xdot, A, B);
+}
+
 }  // namespace
 
 
@@ -198,23 +299,92 @@ PYBIND11_MODULE(campanella, m) {
             return s.str();
         });
 
+    py::enum_<ThrustFrame>(m, "ThrustFrame",
+                           "Frame of the throttle vector tau of the meem dynamics. rtn: radial, transverse and "
+                           "normal directions of the current state, so a constant tau rotates in inertial space. "
+                           "inertial: naif_frame, as rvm.")
+        .value("rtn", ThrustFrame::rtn)
+        .value("inertial", ThrustFrame::inertial);
+
+    const ThrustOptions thrust_defaults;
+    py::class_<ThrustOptions>(m, "ThrustOptions")
+        .def(py::init([](double thrust_N, double isp_s, double mass_unit_kg, double g0, ThrustFrame mee_control_frame) {
+                 ThrustOptions o;
+                 o.thrust_N = thrust_N;
+                 o.isp_s = isp_s;
+                 o.mass_unit_kg = mass_unit_kg;
+                 o.g0 = g0;
+                 o.mee_control_frame = mee_control_frame;
+                 return o;
+             }),
+             py::kw_only(), py::arg("thrust_N"), py::arg("isp_s"), py::arg("mass_unit_kg"),
+             py::arg("g0") = thrust_defaults.g0, py::arg("mee_control_frame") = thrust_defaults.mee_control_frame,
+             R"mydelimiter(
+                Propulsion system of the mass-augmented dynamics (rvm, meem). Immutable.
+
+                The control is u = [tau, Gamma], both dimensionless: the thrust is T_max tau, and the state
+                has the mass m in units of mass_unit_kg (m_bar), with
+                    thrust acceleration = (c1 / m) tau, in DU/TU^2,    mdot = -c2 Gamma, in mass units per TU
+                    c1 = (T_max [kN]) / (m_bar DU / TU^2),    c2 = (T_max [N]) / (Isp g0) * TU / m_bar
+
+                The dynamics treat Gamma as independent of tau: the solver of the optimal control problem is
+                responsible for Gamma = |tau|, and neither Gamma < 0 nor |tau| > Gamma is rejected.
+                SRP uses the state mass, m_bar m. srp_m of SpiceParameters is ignored, but still required
+                to be > 0 if include_srp.
+
+                The values are checked where they are used, not here: the rvm and meem functions raise
+                ValueError unless thrust_N, isp_s, mass_unit_kg and g0 are finite and > 0.
+
+                Args:
+                    thrust_N (float): maximum thrust T_max, in N
+                    isp_s (float): specific impulse, in s
+                    mass_unit_kg (float): mass unit m_bar, in kg
+                    g0 (float): standard gravity, in m/s^2
+                    mee_control_frame (ThrustFrame): frame of tau for meem, RTN by default;
+                        rvm is always in naif_frame
+             )mydelimiter")
+        .def_readonly("thrust_N", &ThrustOptions::thrust_N, "maximum thrust, N")
+        .def_readonly("isp_s", &ThrustOptions::isp_s, "specific impulse, s")
+        .def_readonly("mass_unit_kg", &ThrustOptions::mass_unit_kg, "mass unit, kg")
+        .def_readonly("g0", &ThrustOptions::g0, "standard gravity, m/s^2")
+        .def_readonly("mee_control_frame", &ThrustOptions::mee_control_frame, "frame of tau for meem")
+        .def("__repr__", [](const ThrustOptions& o) {
+            std::ostringstream s;
+            s.precision(16);
+            s << "ThrustOptions(thrust_N=" << o.thrust_N << ", isp_s=" << o.isp_s
+              << ", mass_unit_kg=" << o.mass_unit_kg << ", g0=" << o.g0 << ", mee_control_frame=ThrustFrame."
+              << (o.mee_control_frame == ThrustFrame::rtn ? "rtn" : "inertial") << ")";
+            return s.str();
+        });
+
     py::class_<IvpResult>(m, "IvpResult",
-                          "Solution of an initial value problem: t (N,), x (N, 6) and stm (N, 6, 6) or None")
+                          "Solution of an initial value problem: t (N,), x (N, nx), stm (N, nx, nx) or None, and "
+                          "stm_u (N, nx, nu) or None, with nx = 6 and nu = 0 (rv, mee) or nx = 7 and nu = 4 (rvm, meem)")
         .def_property_readonly("t", [](py::object self) {
             const IvpResult& r = self.cast<const IvpResult&>();
             return view({static_cast<py::ssize_t>(r.size())}, r.t, self);
         }, "times, in TU")
         .def_property_readonly("x", [](py::object self) {
             const IvpResult& r = self.cast<const IvpResult&>();
-            return view({static_cast<py::ssize_t>(r.size()), 6}, r.x, self);
-        }, "states: Cartesian in DU, DU/TU, or MEE [p (DU), f, g, h, k, L] with L not wrapped")
+            return view({static_cast<py::ssize_t>(r.size()), static_cast<py::ssize_t>(r.nx)}, r.x, self);
+        }, "states: Cartesian in DU, DU/TU, or MEE [p (DU), f, g, h, k, L] with L not wrapped; "
+           "followed by the mass, in mass units, for rvm and meem")
         .def_property_readonly("stm", [](py::object self) -> py::object {
             const IvpResult& r = self.cast<const IvpResult&>();
             if (r.stm.empty()) {
                 return py::none();
             }
-            return view({static_cast<py::ssize_t>(r.size()), 6, 6}, r.stm, self);
+            const py::ssize_t nx = static_cast<py::ssize_t>(r.nx);
+            return view({static_cast<py::ssize_t>(r.size()), nx, nx}, r.stm, self);
         }, "state-transition matrices Phi(t, t0), or None for solve_ivp_*")
+        .def_property_readonly("stm_u", [](py::object self) -> py::object {
+            const IvpResult& r = self.cast<const IvpResult&>();
+            if (r.stm_u.empty()) {
+                return py::none();
+            }
+            return view({static_cast<py::ssize_t>(r.size()), static_cast<py::ssize_t>(r.nx),
+                         static_cast<py::ssize_t>(r.nu)}, r.stm_u, self);
+        }, "control sensitivities Psi(t) = dx(t)/du, or None unless solve_ivpstm_rvm or solve_ivpstm_meem")
         .def("__len__", &IvpResult::size);
 
     const char* solve_doc = R"mydelimiter(
@@ -272,6 +442,136 @@ PYBIND11_MODULE(campanella, m) {
 
             Returns:
                 (tuple): (xdot (6,), A (6, 6)) with A = d(xdot)/dx
+          )mydelimiter");
+
+    const char* solve_zoh_doc = R"mydelimiter(
+            Args:
+                params (SpiceParameters): dynamics model
+                thrust (ThrustOptions): propulsion system
+                tspan (list): [t0, tf] in TU since et0; tf < t0 integrates backward
+                x0 (list): initial state (7), with the mass last, in mass units
+                u (list): control [tau_1, tau_2, tau_3, Gamma], dimensionless, held over tspan
+                atol (float): absolute error tolerance, default 1e-12
+                rtol (float): relative error tolerance, default 1e-14
+                t_eval (list): output times in TU, strictly monotonic in the direction of integration
+                    and within tspan; None (default) returns every accepted step
+                max_steps (int): largest number of accepted steps, default 2000000; 0 disables the limit
+
+            Returns:
+                (IvpResult): t (N,), x (N, 7), stm (N, 7, 7) and stm_u (N, 7, 4), the last two None without
+                sensitivities. Phi(t0, t0) = I, Psi(t0) = 0, Phi_dot = A Phi, Psi_dot = A Psi + B
+
+            Raises ValueError on bad input, if m0 is not > 0 or the closed-form mass is not > 0 at the last
+            output time (checked before integrating), or if the trajectory leaves the domain (below
+            sh_rho_min * R, or p <= 0 / w <= 0 in MEE), and RuntimeError on a SPICE error, if the integration
+            fails, or if max_steps is reached (the steps collapse as p -> 0 when thrust deorbits the trajectory).
+            Python signals, such as Ctrl-C, are handled every 1024 steps.
+        )mydelimiter";
+    def_solver_zoh(m, "solve_ivp_rvm", &solve_ivp_rvm,
+                   (std::string("Propagate a Cartesian state and mass [x, y, z, vx, vy, vz, m] with a constant "
+                                "control, with tau in naif_frame\n") + solve_zoh_doc).c_str());
+    def_solver_zoh(m, "solve_ivp_meem", &solve_ivp_meem,
+                   (std::string("Propagate MEE and mass [p, f, g, h, k, L, m] with a constant control, "
+                                "with tau in thrust.mee_control_frame\n") + solve_zoh_doc).c_str());
+    def_solver_zoh(m, "solve_ivpstm_rvm", &solve_ivpstm_rvm,
+                   (std::string("Propagate a Cartesian state and mass with a constant control, with their "
+                                "STM and control sensitivity\n") + solve_zoh_doc).c_str());
+    def_solver_zoh(m, "solve_ivpstm_meem", &solve_ivpstm_meem,
+                   (std::string("Propagate MEE and mass with a constant control, with their STM and "
+                                "control sensitivity\n") + solve_zoh_doc).c_str());
+
+    py::class_<ZohLinearization>(m, "ZohLinearization",
+                                 "Linearization x_{k+1} = Phi_k x_k + Psi_k u_k + c_k of N - 1 zero-order-hold "
+                                 "segments. All fields are read-only arrays with N - 1 rows; len() is N - 1.")
+        .def_property_readonly("x_end", [](py::object self) {
+            const ZohLinearization& z = self.cast<const ZohLinearization&>();
+            return view({static_cast<py::ssize_t>(z.x_end.size()/7), 7}, z.x_end, self);
+        }, "state at the end of each segment (N - 1, 7)")
+        .def_property_readonly("Phi", [](py::object self) {
+            const ZohLinearization& z = self.cast<const ZohLinearization&>();
+            return view({static_cast<py::ssize_t>(z.Phi.size()/49), 7, 7}, z.Phi, self);
+        }, "state-transition matrices (N - 1, 7, 7)")
+        .def_property_readonly("Psi", [](py::object self) {
+            const ZohLinearization& z = self.cast<const ZohLinearization&>();
+            return view({static_cast<py::ssize_t>(z.Psi.size()/28), 7, 4}, z.Psi, self);
+        }, "control sensitivities (N - 1, 7, 4)")
+        .def_property_readonly("c", [](py::object self) {
+            const ZohLinearization& z = self.cast<const ZohLinearization&>();
+            return view({static_cast<py::ssize_t>(z.c.size()/7), 7}, z.c, self);
+        }, "affine terms x_end_k - Phi_k x_ref_k - Psi_k u_ref_k (N - 1, 7)")
+        .def_property_readonly("defects", [](py::object self) {
+            const ZohLinearization& z = self.cast<const ZohLinearization&>();
+            return view({static_cast<py::ssize_t>(z.defects.size()/7), 7}, z.defects, self);
+        }, "x_ref_{k+1} - x_end_k (N - 1, 7)")
+        .def("__len__", [](const ZohLinearization& z) { return z.x_end.size()/7; });
+
+    const char* propagate_zoh_doc = R"mydelimiter(
+            Each segment starts from its own row of x_ref, not from the end of the previous one.
+
+            Args:
+                params (SpiceParameters): dynamics model
+                thrust (ThrustOptions): propulsion system
+                times (list): segment boundaries in TU (N), strictly monotonic; they may decrease, for a
+                    backward integration, with u_ref[k] held from times[k] down to times[k + 1]
+                x_ref (array): reference states (N, 7), with the mass last. The mass of the last row is
+                    not required to be > 0, as that row only enters the last defect. L is not wrapped, so
+                    a wrapped L in x_ref gives defects of multiples of 2 pi
+                u_ref (array): controls [tau_1, tau_2, tau_3, Gamma] (N - 1, 4)
+                atol (float): absolute error tolerance, default 1e-12
+                rtol (float): relative error tolerance, default 1e-14
+                max_steps (int): largest number of accepted steps per segment, default 2000000;
+                    0 disables the limit
+
+            Returns:
+                (ZohLinearization): x_end, Phi, Psi, c and defects, read-only
+
+            Raises ValueError on bad input or shapes, or if a segment leaves the domain, and RuntimeError on a
+            SPICE error, if the integration fails, or if max_steps is reached. The message of a failed segment
+            starts with "<function>: segment k of n (t = [a, b] TU): ". Python signals, such as Ctrl-C, are
+            handled every 1024 steps.
+        )mydelimiter";
+    def_propagate_zoh(m, "propagate_zoh_rvm", &propagate_zoh_rvm,
+                      (std::string("Linearize zero-order-hold segments in Cartesian state and mass\n")
+                       + propagate_zoh_doc).c_str());
+    def_propagate_zoh(m, "propagate_zoh_meem", &propagate_zoh_meem,
+                      (std::string("Linearize zero-order-hold segments in MEE and mass\n")
+                       + propagate_zoh_doc).c_str());
+
+    def_eom_zoh(m, "eom_rvm", &eom_rvm, 7,
+                "Cartesian + mass equations of motion: xdot (7) at t (TU), x (7) and u (4)");
+    def_eom_zoh(m, "eom_meem", &eom_meem, 7, "GVE in MEE + mass: xdot (7) at t (TU), x (7) and u (4)");
+    def_eom_zoh(m, "eomstm_rvm", &eomstm_rvm, 84,
+                "Cartesian + mass equations of motion with sensitivities: xdot (84) at t (TU), u (4) and "
+                "x (84: state, then Phi (7x7) and Psi (7x4), both row-major)");
+    def_eom_zoh(m, "eomstm_meem", &eomstm_meem, 84,
+                "GVE in MEE + mass with sensitivities: xdot (84) at t (TU), u (4) and "
+                "x (84: state, then Phi (7x7) and Psi (7x4), both row-major)");
+
+    m.def("eval_rvm", [](const SpiceParameters& p, const ThrustOptions& thrust, double t,
+                         const std::vector<double>& x, const std::vector<double>& u) {
+              return eval_tuple_zoh(eval_rvm(p, thrust, t, x, u));
+          }, py::arg("params"), py::arg("thrust"), py::arg("t"), py::arg("x"), py::arg("u"),
+          R"mydelimiter(
+            Evaluate the Cartesian + mass equations of motion and their Jacobians at a single time, state and control
+
+            Raises ValueError on bad input, if m is not > 0 or not finite, or below sh_rho_min * R, and
+            RuntimeError with NAIF's message on a SPICE error.
+
+            Returns:
+                (tuple): (xdot (7,), A (7, 7), B (7, 4)) with A = d(xdot)/dx and B = d(xdot)/du
+          )mydelimiter");
+    m.def("eval_meem", [](const SpiceParameters& p, const ThrustOptions& thrust, double t,
+                          const std::vector<double>& x, const std::vector<double>& u) {
+              return eval_tuple_zoh(eval_meem(p, thrust, t, x, u));
+          }, py::arg("params"), py::arg("thrust"), py::arg("t"), py::arg("x"), py::arg("u"),
+          R"mydelimiter(
+            Evaluate the GVE in MEE + mass and their Jacobians at a single time, state and control
+
+            Raises ValueError on bad input, if m is not > 0 or not finite, if p <= 0 or w <= 0, or below
+            sh_rho_min * R, and RuntimeError with NAIF's message on a SPICE error.
+
+            Returns:
+                (tuple): (xdot (7,), A (7, 7), B (7, 4)) with A = d(xdot)/dx and B = d(xdot)/du
           )mydelimiter");
 
     m.def("load_spherical_harmonics",

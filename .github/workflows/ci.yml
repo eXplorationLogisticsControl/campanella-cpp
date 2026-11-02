@@ -62,6 +62,7 @@ jobs:
           ./build-cpp/bin/solve_mee
           ./build-cpp/bin/solve_moon_canonical
           ./build-cpp/bin/solve_sh
+          ./build-cpp/bin/solve_zoh
 
       - uses: astral-sh/setup-uv@v5
         with:

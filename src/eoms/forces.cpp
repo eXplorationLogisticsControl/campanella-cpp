@@ -49,6 +49,14 @@ int check_finite(Workspace& ws, const double* v, int n) {
     return RHS_SUCCESS;
 }
 
+int check_mass(Workspace& ws, double m) {
+    if (!(m > 0.0)) {
+        ws.fault = Fault::mass_domain;
+        return RHS_EDOM;
+    }
+    return check_finite(ws, &m, 1);
+}
+
 /**
  * Add the perturbing accelerations, and optionally their gradient, at time t and position r
  *
@@ -56,12 +64,14 @@ int check_finite(Workspace& ws, const double* v, int n) {
  * @param ws scratch space; body positions are stored in ws.body_pos
  * @param t time, in TU
  * @param r spacecraft position w.r.t. the central body, in DU
+ * @param srp_k SRP coefficient, in DU^3/TU^2; ignored if SRP is off
  * @param a acceleration, in DU/TU^2, added to
  * @param G gradient d(a)/d(r), in 1/TU^2, added to; nullptr to skip it
+ * @param a_srp SRP acceleration alone, in DU/TU^2, zero if SRP is off; nullptr to skip it
  * @return RHS_SUCCESS; RHS_EDOM below sh_rho_min * R; RHS_EBADFUNC on a SPICE error
  */
-int add_perturbations(const Model& model, Workspace& ws, double t, const double r[3],
-                      double a[3], double G[3][3]) {
+int add_perturbations(const Model& model, Workspace& ws, double t, const double r[3], double srp_k,
+                      double a[3], double G[3][3], double a_srp[3]) {
     const size_t N = model.codes.size();
     const char* frame = model.options.naif_frame.c_str();
     const SpiceInt center = model.codes[0];
@@ -89,13 +99,21 @@ int add_perturbations(const Model& model, Workspace& ws, double t, const double 
     }
 
     // solar radiation pressure, from the Sun position of the loop above (zero if it is the center)
+    if (a_srp) {
+        a_srp[0] = a_srp[1] = a_srp[2] = 0.0;
+    }
     if (model.idx_sun >= 0) {
         const double* s = &ws.body_pos[3*model.idx_sun];
         const double d[3] = {r[0] - s[0], r[1] - s[1], r[2] - s[2]};
         const double R = std::sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
-        const double kappa = model.srp_k / (R*R*R);
-        const double a_srp[3] = {kappa*d[0], kappa*d[1], kappa*d[2]};
-        add3(a, a_srp);
+        const double kappa = srp_k / (R*R*R);
+        const double a_s[3] = {kappa*d[0], kappa*d[1], kappa*d[2]};
+        add3(a, a_s);
+        if (a_srp) {
+            for (int j = 0; j < 3; j++) {
+                a_srp[j] = a_s[j];
+            }
+        }
         if (G) {
             double G_srp[3][3];
             srp_gradient(d, kappa, G_srp);
