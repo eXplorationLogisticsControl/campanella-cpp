@@ -1,5 +1,8 @@
 # Basic usage through python
 
+This page lists the options of the Python interface. For a slower, explained walk-through, see the
+[tutorial](tutorial.md); for the equations, see [Equations of motion, frames and units](dynamics_model.md).
+
 ## Overview
 
 Every propagation has two steps:
@@ -14,11 +17,13 @@ Every propagation has two steps:
 
 The dynamics are the same in both coordinate sets; only the integrated variables differ.
 
-The integration uses the explicit embedded Runge-Kutta Prince-Dormand (8, 9) method ([`gsl_odeiv2_step_rk8pd` from GNU GSL](https://www.gnu.org/software/gsl/doc/html/ode-initval.html#c.gsl_odeiv2_step_type.gsl_odeiv2_step_rk8pd)), with [step-size control](https://www.gnu.org/software/gsl/doc/html/ode-initval.html#c.gsl_odeiv2_control_y_new) given by (`gsl_odeiv2_control_y_new`, i.e. $a_y = 1$, $a_{dydt} = 0$)
+The integration uses GSL's explicit embedded Runge-Kutta Prince-Dormand method, which GSL labels "(8, 9)": an 8th-order solution with a 7th-order embedded error estimate ([`gsl_odeiv2_step_rk8pd` from GNU GSL](https://www.gnu.org/software/gsl/doc/html/ode-initval.html#c.gsl_odeiv2_step_type.gsl_odeiv2_step_rk8pd)), with [step-size control](https://www.gnu.org/software/gsl/doc/html/ode-initval.html#c.gsl_odeiv2_control_y_new) given by (`gsl_odeiv2_control_y_new`, i.e. $a_y = 1$, $a_{dydt} = 0$)
 
 $$
-D_i=\epsilon_{a b s}+\epsilon_{\text {rel }}\left|y_i\right|
+D_i=\epsilon_\text{abs}+\epsilon_\text{rel}\left|y_i\right|
 $$
+
+GSL rejects and shrinks a step when the error estimate of any component, including the 36 STM entries of the `solve_ivpstm_*` solvers, exceeds $D_i$ by more than 10%.
 
 
 ## A first example
@@ -61,11 +66,11 @@ campanella.SpiceParameters(
 )
 ```
 
-- **Bodies.** `naif_ids` are NAIF names or numeric ids, e.g. `["MOON", "EARTH", "SUN"]` or `["301", "399", "10"]`. The first one is the central body; the others are third bodies, whose ephemerides are read from the loaded SPK kernels. A body may be listed only once.
+- **Bodies.** `naif_ids` are NAIF names or numeric ids, given as strings, e.g. `["MOON", "EARTH", "SUN"]` or `["301", "399", "10"]`; a list of integers raises `TypeError`. The first one is the central body; the others are third bodies, whose ephemerides are read from the loaded SPK kernels. A body may be listed only once.
 - **Gravitational parameters.** `GMs` are always in km^3/s^2, also in canonical units. When `GMs` is omitted, each body's `GM` is read from the kernel pool, for example `gm_de440.tpc`. A body without a GM raises `ValueError`.
 - **Frame.** `naif_frame` must be an inertial frame. A rotating frame such as `IAU_EARTH` raises `ValueError`.
 - **Aberration correction.** `abcorr` must be `"NONE"`. The force model uses geometric positions.
-- **SRP.** `include_srp=True` requires the Sun (`"10"` or `"SUN"`) among `naif_ids`. It may be the central body. `srp_A` is the area in m^2, `srp_m` the mass in kg, and `srp_rhoS` and `srp_rhoD` the reflection coefficients. The acceleration is `(P0/c) Cr (A/m) (AU/|d|)^2 d/|d|`, with `d` the position from the Sun to the spacecraft, `Cr = 1 + rhoS + 5 rhoD / 3`, and `P0 = 1367 W/m^2` the solar flux at 1 AU. SRP has no shadow model. To use SRP without the Sun's gravity, list the Sun with a GM of 0.
+- **SRP.** `include_srp=True` requires the Sun (`"10"` or `"SUN"`) among `naif_ids`. It may be the central body. `srp_A` is the area in m^2, `srp_m` the mass in kg, and `srp_rhoS` and `srp_rhoD` the fractions of the incident light reflected specularly and diffusely. The acceleration is $(P_0/c)\, C_r\, (A/m)\, (\mathrm{AU}/\|\boldsymbol d\|)^2\, \boldsymbol d/\|\boldsymbol d\|$, with $\boldsymbol d$ the position from the Sun to the spacecraft, $C_r = 1 + \rho_S + 5\rho_D/3$, and $P_0 = 1367$ W/m² the solar flux at 1 AU (see [solar radiation pressure](dynamics_model.md#solar-radiation-pressure)). The $5/3$ differs from the textbook flat-plate value $C_r = 1 + \rho_S + 2\rho_D/3$; to prescribe a $C_r$, set `srp_rhoD=0` and `srp_rhoS` $= C_r - 1$. SRP has no shadow model. To use SRP without the Sun's gravity, list the Sun with a GM of 0.
 - **Gravity field of the central body.** `sh_file` turns it on. See [the gravity-field section](#central-body-gravity-field-spherical-harmonics).
 
 The object is immutable after construction. Its inputs and derived quantities are read-only properties, for example `params.GMs`, `params.mus`, `params.DU`, `params.TU`, `params.VU`, `params.naif_codes` and `params.include_srp`.
@@ -73,14 +78,16 @@ The object is immutable after construction. Its inputs and derived quantities ar
 With a single body, explicit `GMs`, no SRP and no gravity field, the propagation makes no ephemeris query, so no kernels need to be loaded. This is the two-body problem:
 
 ```python
-params = campanella.SpiceParameters(0.0, ["EARTH"], GMs=[398600.4418])
+params = campanella.SpiceParameters(0.0, ["EARTH"], GMs=[398600.4418])   # IERS value of the Earth's GM
 res = campanella.solve_ivp_rv(params, [0.0, 86400.0], [7000.0, 0.0, 0.0, 0.0, 0.43, 7.5])
 ```
 
 
 ## Units
 
-| Argument | `DU` not given, or `use_canonical_scales=False` | `DU` given |
+`use_canonical_scales` only matters when `DU` is given: with `DU=None` the units are always km and s, whatever its value.
+
+| Unit | `DU` not given, or `use_canonical_scales=False` | `DU` given |
 |---|---|---|
 | distance unit `DU` | 1 km | `DU` km |
 | velocity unit `VU` | 1 km/s | `sqrt(GMs[0] / DU)` km/s |
@@ -88,11 +95,14 @@ res = campanella.solve_ivp_rv(params, [0.0, 86400.0], [7000.0, 0.0, 0.0, 0.0, 0.
 
 `x0`, `tspan`, `t_eval` and every output are in DU, DU/TU and TU. `mus = GMs * TU^2 / DU^3` are the GMs in these units, so the central body's scaled GM is 1 when `DU` is given. `et0` is always in ephemeris seconds, and the ephemerides are queried at `et = et0 + t * TU`. SRP's `srp_A` (m^2) and `srp_m` (kg) stay physical.
 
-A Moon-centred example where the lunar GM is 1:
+A Moon-centred example where the lunar GM is 1, with the kernels of the first example loaded:
 
 ```python
 import numpy as np
 
+et0 = 740463475.5117936                  # 2023-06-19T16:16:46 UTC, as in the first example
+state0 = [-7505.7613773288285, 44128.19419987408, -55792.327508873765,
+          0.07193326412942684, 0.018407794390508374, 0.004868437733535174]   # km, km/s, Moon-centred
 params = campanella.SpiceParameters(et0, ["MOON", "EARTH", "SUN"], DU=100000.0)
 DU, VU, TU = params.DU, params.VU, params.TU          # TU is about 5.2 days
 
@@ -122,6 +132,7 @@ res = campanella.solve_ivp_rv(params, tspan, x0, *, atol=1e-12, rtol=1e-14, t_ev
 - A failure raises an exception; a partial trajectory is never returned:
   - `ValueError` for bad input, for a trajectory that goes below `sh_rho_min` times the reference radius of the gravity field, or for MEE that stay out of their domain.
   - `RuntimeError` with NAIF's message for a SPICE error, for example missing ephemeris data.
+  - `RuntimeError` ("integration failed") when GSL gives up because the required step size becomes too small, for example for a trajectory that falls into the central body.
 
 Single-point evaluation of the equations of motion:
 
@@ -134,7 +145,7 @@ xdot = campanella.eom_rv(params, t, x)         # also eom_mee; eomstm_rv / eomst
 
 ## Modified equinoctial elements
 
-`solve_ivp_mee` integrates the Gauss variational equations in MEE `[p, f, g, h, k, L]`. The formulas are in [gve_mee.md](gve_mee.md). `mee2cart(mee, mu)` and `cart2mee(rv, mu)` convert between MEE and Cartesian states, where `mu` is `params.mus[0]`.
+`solve_ivp_mee` integrates the Gauss variational equations in MEE `[p, f, g, h, k, L]`. The formulas are in [gve_mee.md](gve_mee.md). `mee2cart(mee, mu)` and `cart2mee(rv, mu)` convert between MEE and Cartesian states, where `mu` is the central body's GM in the units of the state, `params.mus[0]`. In km and s it equals `params.GMs[0]`; in canonical units it is 1, while `GMs[0]` stays in km^3/s^2. All three functions return Python lists.
 
 ```python
 import numpy as np
@@ -143,7 +154,7 @@ state0 = [-7505.7613773288285, 44128.19419987408, -55792.327508873765,
           0.07193326412942684, 0.018407794390508374, 0.004868437733535174]
 params = campanella.SpiceParameters(
     et0, ["MOON", "EARTH", "SUN"],
-    GMs=[4.902800582147760e+03, 398600.432896939, 132712197035.766],
+    GMs=[4.902800582147760e+03, 398600.432896939, 132712197035.766],   # legacy test GMs, not DE440
     include_srp=True, srp_A=34.675, srp_m=1850.0, srp_rhoS=0.9,
 )
 mu = params.mus[0]
@@ -154,10 +165,10 @@ stm_final = res.stm[-1]                                     # d(mee(tf)) / d(mee
 
 Notes:
 
-- **Singularity at 180 degrees.** The elements are prograde (retrograde factor I = +1) and singular at an inclination of 180 degrees, where h and k grow without bound. `cart2mee` raises `ValueError` within about 1.4e-6 rad of 180 degrees. The solver keeps integrating near that inclination, but accuracy degrades as the orbit approaches 180 degrees or as w = 1 + f cos L + g sin L approaches 0.
+- **Singularity at 180 degrees.** The elements are prograde: Walker's retrograde factor is I = +1 (the I = -1 variant would instead be singular at i = 0, see [gve_mee.md](gve_mee.md#11-elements)). They are singular at an inclination of 180 degrees, where h and k grow without bound. `cart2mee` raises `ValueError` within about 1.4e-6 rad of 180 degrees. The solver keeps integrating near that inclination, but accuracy degrades as the orbit approaches 180 degrees or as w = 1 + f cos L + g sin L approaches 0.
 - **Domain.** A trial step that leaves the domain (p <= 0 or w <= 0) makes the integrator retry with a smaller step. If the state stays out of the domain, the solver raises `ValueError`.
 - **True longitude.** `cart2mee` returns `L` in (-pi, pi]. The solver does not wrap `L`: it grows by 2 pi each revolution, and decreases in backward propagation. Compare `L` values through the wrapped difference.
-- **Jacobian.** `campanella.mee2cart_jacobian(mee, mu)` returns d(r, v)/d(MEE) as a flattened 6x6 matrix. Use it to map the STM between MEE and Cartesian coordinates.
+- **Jacobian.** `campanella.mee2cart_jacobian(mee, mu)` returns d(r, v)/d(MEE) as a flat list of 36 values, row-major; use `np.reshape(J, (6, 6))`. Use it to map the STM between MEE and Cartesian coordinates: `Phi_cart = J(x_f) @ Phi_mee @ inv(J(x_0))`.
 - **Tolerances.** `p` is in DU and the other elements are O(1), so the absolute tolerance acts differently on `p`. For long arcs, choose `DU` close to `p`.
 
 
@@ -167,6 +178,8 @@ Give `sh_file`, `sh_nmax`, `sh_mmax`, `sh_frame` and `sh_rho_min` to `SpiceParam
 
 
 ## Migrating from the `Propagator*` classes
+
+This section is only for code written for earlier versions of campanella, which had `Propagator*` classes instead of `SpiceParameters` and the `solve_ivp_*` functions. New users can skip it.
 
 | Before | Now |
 |---|---|
