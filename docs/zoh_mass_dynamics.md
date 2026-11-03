@@ -247,9 +247,14 @@ Conventions:
 - **Last row.** The last row of `x_ref` enters only the last defect, so its mass need not be $> 0$. It
   must still be finite.
 - **`t_eval`** must be empty. `max_steps` applies to each segment.
-- **Errors name the segment.** A failed segment keeps its exception type, with
+- **Memory.** Only the end of each segment is recorded, so memory does not grow with the number of
+  steps of a segment. The steps are the same as those of `solve_ivpstm_*` over that segment, so the results
+  are bit-identical to the last row of such a run.
+- **Errors name the segment.** A failed segment is rethrown as `std::domain_error`,
+  `std::invalid_argument` or `std::runtime_error`, with
   `"<function>: segment k of n (t = [a, b] TU): "` in front of the message. `k` counts from 0, and `n`
-  is the number of segments. For example:
+  is the number of segments. A class derived from these, which only `IvpOptions::poll` can throw, becomes its
+  base type; any other exception from `poll` passes through unchanged, without the segment. For example:
   `propagate_zoh_rvm: segment 1 of 2 (t = [1, 2] TU): solve_ivpstm_rvm: mass out of domain (m is not > 0) at t = 1 TU`.
 
 
@@ -259,9 +264,20 @@ Conventions:
 ### Mass depletion
 
 Mass is linear in time, so the `rvm` and `meem` solvers check it **before integrating**: if $m_0$ is not
-$> 0$, or $m_0 - c_2\Gamma(t_\text{last} - t_0)$ is not $> 0$, they throw `std::domain_error`, with the
-depletion time in the message. $t_\text{last}$ is the last output time: `tf`, or the last of `t_eval`.
-The check applies whatever the thrust, and also to a zero-length `tspan`.
+$> 0$, or $m_0 + \Delta m$, with $\Delta m = -c_2\Gamma(t_\text{last} - t_0)$, is not above
+$64\,\varepsilon\max(m_0, |\Delta m|)$, they throw `std::domain_error`, with the depletion time in the
+message. $t_\text{last}$ is the last output time: `tf`, or the last of `t_eval`. The check applies whatever
+the thrust, and also to a zero-length `tspan`.
+
+The factor 64 is a heuristic. It refuses the depletion time itself and what is within rounding of its closed
+form, and does not make a result near depletion accurate: the error of the integrated mass grows with the
+number of steps and with $|t|$. Measured, in machine epsilons of $m_0$: 22 to 80 at 30 days, 512 at 300
+days, 238 at $t_0 = 10^6$ and 25,010 at $t_0 = 10^8$. **Results with a final mass within about 1e-12 of
+depletion are not meaningful.** Just outside the margin there are two outcomes, as the thrust acceleration
+$c_1\tau/m$ grows without limit: the solver can return normally with an inaccurate result (a mass
+error of 22% was seen with strong thrust, and at 3000 days a mass of 9.6e-14 against a closed form of 1.47e-14),
+or GSL can fail, which is a `std::runtime_error`. The check holds forward and backward, with $\Gamma < 0$ running
+out going backward.
 
 Every domain error (`std::domain_error`) becomes `ValueError` in Python: mass, MEE, `sh_rho_min` and
 non-finite derivatives.
@@ -288,7 +304,7 @@ on its own. Reaching it with time left throws `std::runtime_error`, naming the t
 
 - **Memory.** With sensitivities and an empty `t_eval`, each accepted step records 85 doubles, so a stall
   reaching the default limit records 1.4 GB, and peak memory can be higher while the vectors reallocate.
-  Give a `t_eval`, or a lower `max_steps`, when this matters.
+  Give a `t_eval`, or a lower `max_steps`, when this matters. `propagate_zoh_*` does not record the steps.
 
 At default tolerances, the header records low-thrust arcs from low Earth and lunar orbit taking up to
 $1.4\times10^6$ steps over 3 years, and $5.9\times10^5$ with sensitivities over 1 year, with fewer in
@@ -307,6 +323,11 @@ Ctrl-C**. `solve_ivp*_rv` and `solve_ivp*_mee` cannot.
 - **Choose $\bar m$ near $m_0$**, so that $m \approx 1$. The trajectory does not depend on $\bar m$
   beyond the integration error, because $c_1/m$ and $c_2\Gamma$ give the same physical thrust and flow. However,
   $\bar m$ sets the size of $m$ and of the mass column of $\Phi$, relative to the tolerances.
+- **`atol` must be $> 0$ in the `rvm` and `meem` solvers**, or they throw `std::invalid_argument`. This is a
+  deliberate restriction. In `meem`, with elements that are exactly zero, sensitivities and thrust, the steps
+  were seen to collapse with `atol = 0`, and with a tiny positive `atol` (1e-300 to 1e-60), which is accepted;
+  `max_steps` bounds such a run. The `rv` and `mee` solvers still accept `atol = 0`, and this collapse was not
+  reproduced there.
 - **A single `atol` and `rtol` apply to all 84 components**: the state, every entry of $\Phi$ and every
   entry of $\Psi$, whatever their units. Sensitivities therefore take part in the step control, and a
   sensitivity run can take many more steps than a state-only run, with a different step sequence. So
@@ -336,16 +357,19 @@ Ctrl-C**. `solve_ivp*_rv` and `solve_ivp*_mee` cannot.
 
 These differ from those proposed in issue #5, for the reasons below. Unless noted, the tolerance is
 about 10 times the largest value measured with `ZOH_PRINT_ERRORS` on Linux x86-64 in Release. Other
-checks use the issue's tolerance.
+checks use the issue's tolerance. The errors that are rounding depend on the build: with an empty build
+type, with GCC and FMA contraction, and with clang and FMA (as AppleClang on arm64 contracts), they reach up to
+about 3 times those values, and every tolerance keeps a margin of at least 3.6 on all of these. The exception
+is the row metric's 1e-4 for a dropped coupling, at 2.4: that value, a deterministic 4.16e-5 on all of these
+builds, is the size of the term left out rather than rounding.
 
 | Check | Issue | Test | Measured | Reason |
 |---|---|---|---|---|
 | Ballistic $\Phi_{1:6,1:6}$ vs `solve_ivpstm_*` | 1e-12 | 4e-11 | 4.3e-12 in Release, 9.8e-12 with an empty build type | step sequences differ (84 vs 42 components) |
 | Ballistic state vs `solve_ivpstm_*` | 1e-12 | 6e-12 | 6.3e-13 in Release, 9.6e-13 with an empty build type | step sequences differ; the measured value also meets the issue's tolerance, and the test keeps the factor of 10 |
-| Cartesian against MEE, mass | identical | 7e-14 | 7.1e-15 | step sequences differ |
+| Cartesian against MEE, mass | identical | $0.25\,\varepsilon N$, for $N$ steps of the two chains so far | up to $0.05\,\varepsilon N$ (4.6e-14 with clang and FMA, 7.1e-15 with GCC in Release) | step sequences differ, and each step rounds |
 | Defects against a state-only run | 1e-10 | 4e-9 km, 7e-13 km/s, 8e-12 for elements, 1.4e-13 for mass | 4.0e-10 km, 7.6e-14 km/s, 8.9e-13, 1.5e-14 | the defects are the integration error, as the step sequences differ |
 | $\Psi$ FD step | $\delta \approx$ 1e-6 | $\delta\tau$ = 1e-4, $\delta\Gamma$ = 1e-2 | | $\delta\Gamma$ = 1e-6 moves $\boldsymbol v$ by about 3e-13 km/s on the 400 s arc above, comparable with the integration error |
-| Closed-form mass, long arc | 1e-13 | 1e-12 (1e-13 on short arcs) | 4.8e-15 with an empty build type | no measured need: the issue's 1e-13 would also pass |
 
 The state-only `rvm` and `meem` solvers with $\boldsymbol u = 0$ and `srp_m` $= \bar m\,m_0$ are bit-equal to `rv` and
 `mee`. A reference built with the identical sensitivity computation has defects at most 1e-10 (the

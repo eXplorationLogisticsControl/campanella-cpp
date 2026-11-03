@@ -314,7 +314,9 @@ Integration options of the solvers.
 : Absolute and relative error tolerances of GSL's `gsl_odeiv2_control_y_new`: each integrated
   component $y_i$ (the states, and the STM and control-sensitivity entries in the `solve_ivpstm_*`
   solvers: all 42 or 84 components, with one `atol` and one `rtol`) is kept
-  within $\epsilon_{abs} + \epsilon_{rel}|y_i|$ per step. Both finite and >= 0, not both zero.
+  within $\epsilon_{abs} + \epsilon_{rel}|y_i|$ per step. Both finite and >= 0, not both zero. The `rvm`
+  and `meem` solvers require `atol` > 0, a deliberate restriction: see
+  [Numerical guidance](zoh_mass_dynamics.md#numerical-guidance). `rv` and `mee` accept 0.
   `atol` is in the units of the state (DU, DU/TU, the MEE, or the mass unit).
 
 `t_eval`
@@ -718,10 +720,12 @@ $\dot\Phi = A\Phi$, $\Phi(t_0) = I$ and $\dot\Psi = A\Psi + B$, $\Psi(t_0) = 0$.
 `meem`; messages start with the function name. Also:
 
 - `std::invalid_argument` as {ref}`ControlledParameters <cpp-controlledparameters>`, or if
-  `options.max_steps < 0`.
+  `options.max_steps < 0` or `options.atol` is not > 0.
 - `std::domain_error` if `m0` is not > 0, including over a zero-length `tspan`, or if the closed form
-  `m0 - c2 Gamma (t - t0)` is not > 0 at the last output time (`tf`, or the last of `t_eval`). This is
-  checked before integrating, whatever the thrust, and the message has the depletion time.
+  `m0 - c2 Gamma (t - t0)` is not above `64 eps max(m0, |c2 Gamma (t - t0)|)` at the last output time (`tf`, or
+  the last of `t_eval`), so that the depletion time itself is refused. This is checked before integrating,
+  whatever the thrust, and the message has the depletion time. The factor is a heuristic: results within about
+  1e-12 of depletion are not meaningful; see {ref}`Mass depletion <zoh-depletion>`.
 - `std::runtime_error` if `options.max_steps` is reached, with the time reached.
 
 (cpp-eom-zoh)=
@@ -738,7 +742,9 @@ The right-hand sides, with the signature of `gsl_odeiv2_system::function`. `para
 {ref}`ControlledParameters <cpp-controlledparameters>`. `x` and `dxdt` must not overlap. `eom_*` take 7
 states. `eomstm_*` take 84: the state, then $\Phi$ (7x7) and $\Psi$ (7x4), both row-major.
 
-**Returns** as {ref}`eom_rv <cpp-eom>`. A mass that is not > 0 or not finite returns `GSL_EDOM`.
+**Returns** as {ref}`eom_rv <cpp-eom>`. A mass that is not > 0 or not finite returns `GSL_EDOM`, and so does
+a non-finite derivative of $\Phi$ or $\Psi$ in `eomstm_*`, unlike `eomstm_rv` and `eomstm_mee`, which check
+only the state derivative and $A$.
 {ref}`eom_error <cpp-eom-error>` on `cp.params()` describes the last failure.
 
 (cpp-eval-zoh)=
@@ -784,15 +790,17 @@ See [`propagate_zoh`](zoh_mass_dynamics.md#propagate_zoh) for the conventions.
 - `x_ref`: reference states, N x 7 row-major. Do not wrap `L`: a wrapped `L` gives defects of multiples
   of $2\pi$. The last row only enters the last defect, so its mass need not be > 0.
 - `u_ref`: controls, (N - 1) x 4 row-major.
-- `options`: tolerances and `max_steps`, per segment; `t_eval` must be empty.
+- `options`: tolerances and `max_steps`, per segment; `t_eval` must be empty. Only the end of each segment
+  is recorded, so memory does not grow with the steps.
 
 **Returns** a {ref}`ZohLinearization <cpp-zohlinearization>`.
 
-**Throws** as {ref}`solve_ivpstm_rvm or solve_ivpstm_meem <cpp-solve-zoh>`, keeping the type, with
+**Throws** as {ref}`solve_ivpstm_rvm or solve_ivpstm_meem <cpp-solve-zoh>`, as `std::domain_error`,
+`std::invalid_argument` or `std::runtime_error`, with
 `"<function>: segment k of n (t = [a, b] TU): "` in front of the message of a failed segment (`k` from
 0); `std::invalid_argument` on inconsistent sizes, non-finite or non-monotonic input, or a non-empty
-`t_eval`. An exception from `poll` other than `std::domain_error`, `std::invalid_argument` or
-`std::runtime_error` passes through unchanged.
+`t_eval`. A class derived from these three, which only `poll` can throw, is rethrown as its base type. Any
+other exception from `poll` passes through unchanged, without the segment.
 
 
 ## Spherical harmonics

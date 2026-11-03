@@ -12,6 +12,7 @@ jobs:
   build-test:
     name: build and test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -51,7 +52,8 @@ jobs:
           # fail, rather than skip, the tests that need kernels
           CAMPANELLA_REQUIRE_KERNELS: 1
         working-directory: build-cpp
-        run: ctest --output-on-failure --parallel 4
+        # about 10 s in total, and at most 7 s for a test, in Release on Linux; CI's empty build type is slower
+        run: ctest --output-on-failure --parallel 4 --timeout 300
 
       - name: Run C++ examples
         env:

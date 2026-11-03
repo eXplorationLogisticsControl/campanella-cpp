@@ -312,8 +312,9 @@ bounds steps, not time, and only these solvers and `propagate_zoh_*` accept it. 
 **Interrupting.** These solvers and `propagate_zoh_*` check for Python signals every 1024 steps, so Ctrl-C
 stops them. `solve_ivp_rv`, `solve_ivp_mee`, `solve_ivpstm_rv` and `solve_ivpstm_mee` cannot be interrupted.
 
-**Raises** `ValueError` for invalid input or a state that leaves the domain, including a mass that is
-not > 0 at `t0` or at the last output time (checked before integrating); `RuntimeError` for a SPICE error,
+**Raises** `ValueError` for invalid input, including `atol` that is not > 0, or a state that leaves the domain,
+including a mass that is not > 0 at `t0` or not above a margin (64 epsilon of the larger of `m0` and the mass
+change) at the last output time, checked before integrating; `RuntimeError` for a SPICE error,
 an integration failure, or if `max_steps` is reached.
 
 ```python
@@ -355,6 +356,8 @@ The right-hand sides of the solvers. They take `params` and `thrust` directly, a
 | `eom_rvm`, `eom_meem` | state, 7 values | `xdot`, shape `(7,)` |
 | `eomstm_rvm`, `eomstm_meem` | state, then $\Phi$ (7x7) and $\Psi$ (7x4), both row-major: 84 values | shape `(84,)`, in the same order |
 
+A non-finite $\Phi$ or $\Psi$ on input raises `ValueError`, unlike `eomstm_rv` and `eomstm_mee`.
+
 (py-propagate-zoh)=
 ### `propagate_zoh_rvm`, `propagate_zoh_meem`
 
@@ -372,6 +375,8 @@ Linearizes the segments between N `times`. Each segment starts from its own row 
 - `x_ref`: array-like of shape `(N, 7)`. Do not wrap `L`: a wrapped `L` gives defects of multiples of $2\pi$.
   The mass of the last row need not be > 0.
 - `u_ref`: array-like of shape `(N - 1, 4)`.
+- Both must hold integers or floats: complex numbers, strings, booleans and objects raise `TypeError`, rather
+  than being cast.
 - `max_steps`: per segment. There is no `t_eval` argument.
 
 **Returns** a `ZohLinearization`, which cannot be constructed from Python. `len(z)` is N - 1, and its
@@ -385,7 +390,8 @@ attributes are read-only NumPy views, as in {ref}`IvpResult <py-ivpresult>`:
 | `c` | `(N - 1, 7)` | `x_end[k] - Phi[k] @ x_ref[k] - Psi[k] @ u_ref[k]` |
 | `defects` | `(N - 1, 7)` | `x_ref[k + 1] - x_end[k]` |
 
-**Raises** `ValueError` on bad input or shapes, or if a segment leaves the domain; `RuntimeError` on a SPICE
+**Raises** `TypeError` if `x_ref` or `u_ref` does not hold integers or floats; `ValueError` on bad input
+or shapes, `atol` that is not > 0, or if a segment leaves the domain; `RuntimeError` on a SPICE
 error, an integration failure, or if `max_steps` is reached. The message of a failed segment starts with
 `"<function>: segment k of n (t = [a, b] TU): "`, with `k` from 0. An exception raised by a Python signal handler
 passes through unchanged.

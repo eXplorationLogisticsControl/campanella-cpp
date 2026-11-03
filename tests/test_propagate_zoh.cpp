@@ -10,6 +10,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <typeinfo>
 #include <vector>
 
 #include "helpers.hpp"
@@ -764,4 +765,66 @@ TEST(Zoh, MaxStepsIsPerSegmentAndNamesIt) {
     EXPECT_EQ(campanella::propagate_zoh_meem(p, th, t, x, u, each).x_end, ref.x_end);
     each.max_steps = -1;
     EXPECT_THROW(campanella::propagate_zoh_meem(p, th, t, x, u, each), std::invalid_argument);
+}
+
+TEST(Zoh, TypesOfTheExceptionsOfPoll) {
+    // What the header says: three base types, with the segment; anything else unchanged, without it
+    const SpiceParameters p = two_body();
+    const Arc arc = arcs()[1];
+    const Dyn& d = DYNS[0];
+    const ThrustOptions th = thruster(d, arc);
+    const std::vector<double> x0 = state_of(d, p, arc.rv, MASS);
+    std::vector<double> x = x0;
+    x.insert(x.end(), x0.begin(), x0.end());
+    const std::vector<double> t = {0.0, 10.0}, u = {0.0, 0.0, 0.0, 0.1};
+    const auto run = [&](std::function<void()> poll) {
+        IvpOptions o;
+        o.poll = std::move(poll);
+        d.propagate(p, th, t, x, u, o);
+    };
+    const auto rethrown_as = [&](std::function<void()> poll, const std::type_info& type) {
+        try {
+            run(std::move(poll));
+            ADD_FAILURE() << "expected an exception";
+        } catch (const std::exception& e) {
+            EXPECT_TRUE(typeid(e) == type) << typeid(e).name();
+            EXPECT_NE(std::string(e.what()).find("segment 0 of 1"), std::string::npos) << e.what();
+        }
+    };
+    struct Derived : std::domain_error {
+        using std::domain_error::domain_error;
+    };
+    rethrown_as([] { throw std::overflow_error("x"); }, typeid(std::runtime_error));
+    rethrown_as([] { throw Derived("x"); }, typeid(std::domain_error));
+    rethrown_as([] { throw std::invalid_argument("x"); }, typeid(std::invalid_argument));
+    try {
+        run([] { throw std::logic_error("own"); });
+        ADD_FAILURE() << "expected std::logic_error";
+    } catch (const std::logic_error& e) {
+        EXPECT_TRUE(typeid(e) == typeid(std::logic_error)) << typeid(e).name();
+        EXPECT_STREQ(e.what(), "own");
+    }
+    EXPECT_THROW(run([] { throw 42; }), int);
+}
+
+TEST(Zoh, EndOfSegmentIsTheEndOfARecordedRun) {
+    // Only the last row is recorded inside propagate_zoh: the same steps, so the same bits
+    const SpiceParameters p = two_body();
+    for (const Arc& arc : arcs()) {
+        for (const Dyn& d : DYNS) {
+            SCOPED_TRACE(d.name);
+            const ThrustOptions th = thruster(d, arc);
+            const std::vector<double> x0 = state_of(d, p, arc.rv, MASS);
+            std::vector<double> x = x0;
+            x.insert(x.end(), x0.begin(), x0.end());
+            const std::vector<double> u = {0.1, 0.0, 0.0, 0.1};
+            for (const std::vector<double>& t : {std::vector<double>{0.0, 200.0}, std::vector<double>{200.0, 0.0}}) {
+                const ZohLinearization z = d.propagate(p, th, t, x, u, {});
+                const IvpResult r = d.solvestm(p, th, t, x0, u, {});
+                EXPECT_EQ(z.x_end, final_state_n(r, NX));
+                EXPECT_EQ(z.Phi, final_stm_n(r, NX));
+                EXPECT_EQ(z.Psi, final_stm_u(r, NX, NU));
+            }
+        }
+    }
 }

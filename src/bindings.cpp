@@ -116,9 +116,19 @@ void def_solver_zoh(py::module_& m, const char* name, SolverZoh solver, const ch
 
 using RefArray = py::array_t<double, py::array::c_style | py::array::forcecast>;
 
-// A 2-D array with the given number of columns, flattened row-major. The number of rows is checked by
-// propagate_zoh_*, against times.
-std::vector<double> flatten_rows(const RefArray& a, py::ssize_t cols, const char* name, const char* who) {
+// A 2-D array of integers or floats with the given number of columns, flattened row-major. forcecast would
+// drop imaginary parts and parse strings, so the type is checked first; TypeError, as for x0 and u. The
+// number of rows is checked by propagate_zoh_*, against times.
+std::vector<double> flatten_rows(const py::object& values, py::ssize_t cols, const char* name, const char* who) {
+    const py::array raw = py::array::ensure(values);
+    const char kind = raw ? raw.dtype().kind() : '?';
+    if (kind != 'i' && kind != 'u' && kind != 'f') {
+        throw py::type_error(std::string(who) + ": " + name + " must be an array of integers or floats");
+    }
+    const RefArray a = RefArray::ensure(raw);
+    if (!a) {
+        throw py::error_already_set();
+    }
     if (a.ndim() != 2 || a.shape(1) != cols) {
         std::ostringstream msg;
         msg << who << ": " << name << " must be a 2-D array with " << cols << " columns, got shape (";
@@ -138,7 +148,7 @@ using Propagate = ZohLinearization (*)(const SpiceParameters&, const ThrustOptio
 void def_propagate_zoh(py::module_& m, const char* name, Propagate propagate, const char* doc) {
     m.def(name,
           [propagate, name](const SpiceParameters& params, const ThrustOptions& thrust,
-                            const std::vector<double>& times, const RefArray& x_ref, const RefArray& u_ref,
+                            const std::vector<double>& times, const py::object& x_ref, const py::object& u_ref,
                             double atol, double rtol, long long max_steps) {
               const std::vector<double> x = flatten_rows(x_ref, 7, "x_ref", name);
               const std::vector<double> u = flatten_rows(u_ref, 4, "u_ref", name);
@@ -251,7 +261,8 @@ PYBIND11_MODULE(campanella, m) {
                     abcorr (str): aberration correction; only "NONE" is accepted
                     include_srp (bool): solar radiation pressure; requires the Sun ("10") in naif_ids
                     srp_A (float): spacecraft area, m^2
-                    srp_m (float): spacecraft mass, kg
+                    srp_m (float): spacecraft mass, kg. The rvm and meem functions ignore it, and use the state
+                        mass, but it must still be > 0 if include_srp
                     srp_rhoS (float): specular reflection coefficient
                     srp_rhoD (float): diffuse reflection coefficient
                     sh_file (str): central-body gravity field, PDS SHADR .tab or ICGEM .gfc; "" (default) for none
@@ -451,7 +462,7 @@ PYBIND11_MODULE(campanella, m) {
                 tspan (list): [t0, tf] in TU since et0; tf < t0 integrates backward
                 x0 (list): initial state (7), with the mass last, in mass units
                 u (list): control [tau_1, tau_2, tau_3, Gamma], dimensionless, held over tspan
-                atol (float): absolute error tolerance, default 1e-12
+                atol (float): absolute error tolerance, > 0, default 1e-12
                 rtol (float): relative error tolerance, default 1e-14
                 t_eval (list): output times in TU, strictly monotonic in the direction of integration
                     and within tspan; None (default) returns every accepted step
@@ -461,8 +472,8 @@ PYBIND11_MODULE(campanella, m) {
                 (IvpResult): t (N,), x (N, 7), stm (N, 7, 7) and stm_u (N, 7, 4), the last two None without
                 sensitivities. Phi(t0, t0) = I, Psi(t0) = 0, Phi_dot = A Phi, Psi_dot = A Psi + B
 
-            Raises ValueError on bad input, if m0 is not > 0 or the closed-form mass is not > 0 at the last
-            output time (checked before integrating), or if the trajectory leaves the domain (below
+            Raises ValueError on bad input, if m0 is not > 0 or the closed-form mass is not above a margin
+            (64 epsilon of max(m0, |mass change|)) at the last output time (checked before integrating), or if the trajectory leaves the domain (below
             sh_rho_min * R, or p <= 0 / w <= 0 in MEE), and RuntimeError on a SPICE error, if the integration
             fails, or if max_steps is reached (the steps collapse as p -> 0 when thrust deorbits the trajectory).
             Python signals, such as Ctrl-C, are handled every 1024 steps.
@@ -513,11 +524,11 @@ PYBIND11_MODULE(campanella, m) {
                 thrust (ThrustOptions): propulsion system
                 times (list): segment boundaries in TU (N), strictly monotonic; they may decrease, for a
                     backward integration, with u_ref[k] held from times[k] down to times[k + 1]
-                x_ref (array): reference states (N, 7), with the mass last. The mass of the last row is
+                x_ref (array): reference states (N, 7) of integers or floats, with the mass last. The mass of the last row is
                     not required to be > 0, as that row only enters the last defect. L is not wrapped, so
                     a wrapped L in x_ref gives defects of multiples of 2 pi
-                u_ref (array): controls [tau_1, tau_2, tau_3, Gamma] (N - 1, 4)
-                atol (float): absolute error tolerance, default 1e-12
+                u_ref (array): controls [tau_1, tau_2, tau_3, Gamma] (N - 1, 4), of integers or floats
+                atol (float): absolute error tolerance, > 0, default 1e-12
                 rtol (float): relative error tolerance, default 1e-14
                 max_steps (int): largest number of accepted steps per segment, default 2000000;
                     0 disables the limit
@@ -525,7 +536,8 @@ PYBIND11_MODULE(campanella, m) {
             Returns:
                 (ZohLinearization): x_end, Phi, Psi, c and defects, read-only
 
-            Raises ValueError on bad input or shapes, or if a segment leaves the domain, and RuntimeError on a
+            Raises TypeError if x_ref or u_ref is not an array of integers or floats, ValueError on bad input
+            or shapes, or if a segment leaves the domain, and RuntimeError on a
             SPICE error, if the integration fails, or if max_steps is reached. The message of a failed segment
             starts with "<function>: segment k of n (t = [a, b] TU): ". Python signals, such as Ctrl-C, are
             handled every 1024 steps.

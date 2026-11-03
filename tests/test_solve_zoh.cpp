@@ -87,6 +87,7 @@ const double TOL_ROUNDTRIP_PSI = 2e-11;     // 1.7e-12
 const double TOL_STATE_ONLY = 5e-11;        // 4.8e-12, the step sizes differ
 const double TOL_TEVAL_STATE = 3e-13;       // 2.3e-14
 const double TOL_TEVAL_SENS = 1e-11;        // 1.1e-12
+const double RATE_REL_TOL = 1e-10;          // 9.6e-12 on all four builds, rounding of m over the mass change
 const double TOL_GSL = 1e-13;               // 0: the driver takes the same steps as the solvers
 
 ThrustOptions thruster(const Dyn& d) {
@@ -542,7 +543,7 @@ TEST(Mass, DepletionThrowsWithThrustAndSensitivities) {
         const std::vector<double> u = {0.3, -0.5, 0.4, 0.71};
         const double t_star = MASS / (ControlledParameters(p, th, u).c2() * u[3]);
         for (const Solver solve : {d.solve, d.solvestm}) {
-            // not t* itself: the rounding of m0 - c2 Gamma t* decides on which side it falls
+            // past t*; Mass.DepletionTimeItselfIsRefused has its edge
             for (const double tf : {t_star * (1 + 1e-9), 2 * t_star}) {
                 try {
                     solve(p, th, {0.0, tf}, x0, u, {});
@@ -560,6 +561,110 @@ TEST(Mass, DepletionThrowsWithThrustAndSensitivities) {
             EXPECT_EQ(solve(p, th, {0.0, 2 * t_star}, x0, u, o).size(), 1u);
             EXPECT_NO_THROW(solve(p, th, {0.0, 60.0}, x0, {0.0, 0.0, 0.0, 0.0}, {}));
             EXPECT_NO_THROW(solve(p, th, {0.0, 60.0}, x0, {0.0, 0.0, 0.0, -1.0}, {}));
+        }
+    }
+}
+
+TEST(Mass, BackwardMassFollowsTheSignOfTheSpan) {
+    // Going backward with Gamma > 0 the mass grows without limit, so a span longer than t* is valid, and
+    // with Gamma < 0 it is the backward arc that runs out. The check must use the signed span: with |dt|,
+    // the first is refused, and the second is left to the integrator, which ends in GSL_FAILURE.
+    const SpiceParameters p = two_body(false);
+    for (const Dyn& d : DYNS) {
+        SCOPED_TRACE(d.name);
+        const ThrustOptions th = strong_thruster(d);
+        const std::vector<double> x0 = state_of(d, p, state_llo(), MASS);
+        const std::vector<double> gain = {0.0, 0.0, 0.0, 1.0};
+        const double t_star = MASS / ControlledParameters(p, th, gain).c2();
+        for (const Solver solve : {d.solve, d.solvestm}) {
+            const IvpResult r = solve(p, th, {0.0, -1.5 * t_star}, x0, gain, {});
+            EXPECT_EQ(r.t.back(), -1.5 * t_star);
+            EXPECT_NEAR(r.x.back(), 2.5 * MASS, 1e-12 * MASS);
+
+            const std::vector<double> drain = {0.3, -0.5, 0.4, -1.0};
+            try {
+                solve(p, th, {0.0, -2 * t_star}, x0, drain, {});
+                ADD_FAILURE() << "expected std::domain_error";
+            } catch (const std::domain_error& e) {
+                EXPECT_NE(std::string(e.what()).find("mass out of domain"), std::string::npos) << e.what();
+                EXPECT_NEAR(fault_time(e.what()), -t_star, 1e-13 * t_star) << e.what();
+            }
+        }
+    }
+}
+
+TEST(Mass, DepletionTimeItselfIsRefused) {
+    // Within rounding of t*, whatever the rounding of m0 - c2 Gamma t* and the thrust, for all solvers
+    const SpiceParameters p = two_body(false);
+    const struct { std::vector<double> u; double dir; } controls[] = {
+        {{0.0, 0.0, 0.0, 1.0}, 1.0}, {{0.6, 0.0, 0.8, 1.0}, 1.0},      // forward, Gamma > 0
+        {{0.0, 0.0, 0.0, -1.0}, -1.0}, {{0.6, 0.0, 0.8, -1.0}, -1.0},  // backward, Gamma < 0
+    };
+    for (const Dyn& d : DYNS) {
+        SCOPED_TRACE(d.name);
+        const ThrustOptions th = strong_thruster(d);
+        const std::vector<double> x0 = state_of(d, p, state_llo(), MASS);
+        const double t_star = MASS / ControlledParameters(p, th, {0.0, 0.0, 0.0, 1.0}).c2();
+        for (const auto& c : controls) {
+            for (const Solver solve : {d.solve, d.solvestm}) {
+                for (const double f : {1.0, 1.0 + 1e-16, 1.0 - 1.2e-16, 1.0 - 1e-15}) {
+                    const double tf = c.dir * t_star * f;
+                    EXPECT_THROW(solve(p, th, {0.0, tf}, x0, c.u, {}), std::domain_error) << "f = " << f;
+                    IvpOptions o;
+                    o.t_eval = {tf};
+                    EXPECT_THROW(solve(p, th, {0.0, tf}, x0, c.u, o), std::domain_error) << "f = " << f;
+                }
+            }
+        }
+        // just outside the margin, without thrust nothing else is singular
+        for (const Solver solve : {d.solve, d.solvestm}) {
+            const double tf = t_star * (1.0 - 1e-12);
+            const IvpResult r = solve(p, th, {0.0, tf}, x0, {0.0, 0.0, 0.0, 1.0}, {});
+            EXPECT_EQ(r.t.back(), tf);
+            EXPECT_GT(r.x.back(), 0.0);
+        }
+        // no flow: nothing to run out, with any span
+        const IvpResult none = d.solve(p, th, {0.0, 10 * t_star}, x0, {0.0, 0.0, 0.0, 0.0}, {});
+        EXPECT_EQ(none.x.back(), MASS);
+    }
+}
+
+TEST(Mass, MarginOfTheDepletionCheck) {
+    // Around 64 eps of m0: 32 eps is refused, and 128 eps goes on to the integrator. tau = 0, so that nothing
+    // else is singular, forward with Gamma > 0 and backward with Gamma < 0
+    const SpiceParameters p = two_body(false);
+    const double eps = std::numeric_limits<double>::epsilon();
+    for (const Dyn& d : DYNS) {
+        SCOPED_TRACE(d.name);
+        const ThrustOptions th = strong_thruster(d);
+        const std::vector<double> x0 = state_of(d, p, state_llo(), MASS);
+        const double t_star = MASS / ControlledParameters(p, th, {0.0, 0.0, 0.0, 1.0}).c2();
+        for (const double dir : {1.0, -1.0}) {
+            const std::vector<double> u = {0.0, 0.0, 0.0, dir};
+            for (const Solver solve : {d.solve, d.solvestm}) {
+                EXPECT_THROW(solve(p, th, {0.0, dir * t_star * (1.0 - 32 * eps)}, x0, u, {}), std::domain_error);
+                const double tf = dir * t_star * (1.0 - 128 * eps);
+                EXPECT_EQ(solve(p, th, {0.0, tf}, x0, u, {}).t.back(), tf);
+            }
+        }
+    }
+}
+
+TEST(Mass, RateFollowsTheSignOfGamma) {
+    const SpiceParameters p = two_body(false);
+    for (const Dyn& d : DYNS) {
+        SCOPED_TRACE(d.name);
+        const ThrustOptions th = thruster(d);
+        const std::vector<double> x0 = state_of(d, p, state_llo(), MASS);
+        for (const double gamma : {0.7, -0.7, 0.0}) {
+            const std::vector<double> u = {0.1, 0.2, -0.1, gamma};
+            const double c2 = ControlledParameters(p, th, u).c2();
+            EXPECT_EQ(d.eval(p, th, 0.0, x0, u).xdot[6], -c2 * gamma);
+            const IvpResult r = d.solve(p, th, {0.0, 3600.0}, x0, u, {});
+            const double dm = c2 * gamma * 3600.0;
+            note("mass, relative to the mass change", d.name, false,
+                 gamma == 0.0 ? 0.0 : std::abs(r.x.back() - (MASS - dm)) / std::abs(dm));
+            EXPECT_NEAR(r.x.back(), MASS - dm, RATE_REL_TOL * std::abs(dm));
         }
     }
 }
@@ -1152,4 +1257,64 @@ TEST(MaxSteps, LongArcsStayUnderTheDefault) {
     EXPECT_EQ(campanella::solve_ivp_rvm(canon, th, {0.0, tf/canon.TU()}, rvm_canon, u_inertial).t.back(), tf/canon.TU());
     EXPECT_EQ(campanella::solve_ivp_meem(km, th, {0.0, tf}, mee, u_rtn).t.back(), tf);
     EXPECT_EQ(campanella::solve_ivp_meem(canon, th, {0.0, tf/canon.TU()}, mee_canon, u_rtn).t.back(), tf/canon.TU());
+}
+
+TEST(MaxSteps, AtolMustBePositive) {
+    // A deliberate restriction: see src/integrate.cpp
+    const SpiceParameters p(ET0, {"MOON"}, with_gms({GM_LIST[0]}));
+    const std::vector<double> m = {3000.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0};
+    const std::vector<double> rv = {3000.0, 0.0, 0.0, 0.0, 1.2, 0.0, 1.0};
+    for (const Dyn& d : DYNS) {
+        SCOPED_TRACE(d.name);
+        const std::vector<double>& x0 = d.mee ? m : rv;
+        for (const Solver solve : {d.solve, d.solvestm}) {
+            for (const double atol : {0.0, -0.0}) {
+                IvpOptions o;
+                o.atol = atol;
+                o.rtol = 1e-10;
+                try {
+                    solve(p, thruster(d), {0.0, 600.0}, x0, U, o);
+                    ADD_FAILURE() << "expected std::invalid_argument";
+                } catch (const std::invalid_argument& e) {
+                    expect_contains(e.what(), "atol must be > 0");
+                }
+            }
+            IvpOptions rtol0;
+            rtol0.atol = 1e-10;
+            rtol0.rtol = 0.0;
+            EXPECT_EQ(solve(p, thruster(d), {0.0, 600.0}, x0, U, rtol0).t.back(), 600.0);
+        }
+    }
+    // rv and mee still take it. They have no step limit, so with no element at zero, and only 60 s
+    IvpOptions o;
+    o.atol = 0.0;
+    o.rtol = 1e-10;
+    EXPECT_EQ(campanella::solve_ivp_rv(p, {0.0, 60.0}, STATE0, o).t.back(), 60.0);
+}
+
+TEST(Eom, NonFiniteSensitivitiesAreOutOfTheDomain) {
+    const SpiceParameters p = two_body(false);
+    for (const Dyn& d : DYNS) {
+        SCOPED_TRACE(d.name);
+        const ThrustOptions th = thruster(d);
+        const ControlledParameters cp(p, th, U);
+        const std::vector<double> x0 = state_of(d, p, state_llo(), MASS);
+        std::vector<double> y(84, 0.0), dy(84);
+        std::copy(x0.begin(), x0.end(), y.begin());
+        for (int i = 0; i < 7; i++) {
+            y[7 + 8 * i] = 1.0;
+        }
+        EXPECT_EQ(d.eomstm(0.0, y.data(), dy.data(), const_cast<ControlledParameters*>(&cp)), GSL_SUCCESS);
+        for (const size_t i : {size_t(7), size_t(55), size_t(56), size_t(83)}) {
+            for (const double bad : {NAN_, INF}) {
+                std::vector<double> y_bad = y;
+                y_bad[i] = bad;
+                EXPECT_EQ(d.eomstm(0.0, y_bad.data(), dy.data(), const_cast<ControlledParameters*>(&cp)), GSL_EDOM)
+                    << "i = " << i;
+                expect_contains(campanella::eom_error(p), "non-finite");
+            }
+        }
+        // and usable again
+        EXPECT_EQ(d.eomstm(0.0, y.data(), dy.data(), const_cast<ControlledParameters*>(&cp)), GSL_SUCCESS);
+    }
 }

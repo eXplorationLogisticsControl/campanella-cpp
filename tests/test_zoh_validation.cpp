@@ -53,12 +53,16 @@ const Dyn DYNS[] = {RVM, MEEM_RTN, MEEM_INERTIAL};
 const Vec U = {0.3, -0.5, 0.4, 0.71};
 const double DAY = 86400.0;
 const double FLOOR = 1e-14;
+const double EPS = std::numeric_limits<double>::epsilon();
 
 // Tolerances that the issue and plan do not fix, or that they fix below what is achievable: about 10
 // times the largest value measured with ZOH_PRINT_ERRORS (in the comments), on Linux x86-64 in Release.
+// What is rounding moves with the build: an empty build type, GCC with FMA contraction or clang with FMA
+// (as AppleClang on arm64) give up to about 3 times these values, leaving a margin of at least 3.6. The
+// exception is "dropped coupling, row metric blind", at 2.4: it is the size of the term left out, a
+// deterministic 4.16e-5 on all four builds, and not rounding.
 const double TOL_BALLISTIC_STATE = 6e-12;    // 6.3e-13; issue 1e-12, the step sequences differ
 const double TOL_BALLISTIC_STM = 4e-11;      // 4.3e-12; issue 1e-12, the step sequences differ
-const double TOL_CROSSVAL_MASS = 7e-14;      // 7.1e-15; issue "identical", the step sequences differ
 const double TOL_THRUST_COUPLING = 2e-3;     // 1.7e-4, the neglected higher-order terms
 const double TOL_SRP_COUPLING = 2e-2;        // 1.6e-3, the neglected higher-order terms
 const double TOL_SEMIGROUP = 2e-11;          // 1.7e-12
@@ -271,7 +275,7 @@ TEST(ZohValMass, ClosedForm) {
         check_mass_samples("short", d, p, thruster(d, 20.0), 1000.0, 1000.0 + 3600.0, 0.95, 1e-13);
         check_mass_samples("short backward", d, p, thruster(d, 20.0), 3600.0, 0.0, 0.5, 1e-13);
         check_mass_samples("short canonical", d, pc, thruster(d, 20.0), 0.0, 3600.0 / pc.TU(), 0.95, 1e-13);
-        check_mass_samples("long", d, p, thruster(d), 0.0, TF, 1.0, 1e-12);
+        check_mass_samples("long", d, p, thruster(d), 0.0, TF, 1.0, 1e-13);
     }
 }
 
@@ -281,7 +285,7 @@ TEST(ZohValMass, RowsExact) {
     for (const Dyn& d : DYNS) {
         check_mass_rows("short", d, p, thruster(d, 20.0), 1000.0, 1000.0 + 3600.0, 1e-13);
         check_mass_rows("short backward", d, p, thruster(d, 20.0), 3600.0, 0.0, 1e-13);
-        check_mass_rows("long", d, p, thruster(d), 0.0, TF, 1e-12);
+        check_mass_rows("long", d, p, thruster(d), 0.0, TF, 1e-13);
     }
 }
 
@@ -609,12 +613,14 @@ TEST(ZohValCrossVal, CartVsMee) {
     const Vec J0 = jbar(xm, MU_MOON);
     Vec chain_c = identity7(), chain_m = identity7();
     Vec chain_u_c, chain_u_m;  // sensitivity of the current state to the first control
+    size_t steps = 0;
 
     for (size_t k = 0; k < controls.size(); k++) {
         const double t0 = k * seg, t1 = (k + 1) * seg;
         const Vec Jk = jbar(xm, MU_MOON);
         const IvpResult rc = RVM.solvestm(p, th, {t0, t1}, xc, controls[k], IvpOptions{});
         const IvpResult rm = MEEM_INERTIAL.solvestm(p, th, {t0, t1}, xm, controls[k], IvpOptions{});
+        steps += rc.size() + rm.size();
         xc = final_state_n(rc, 7);
         xm = final_state_n(rm, 7);
         const Vec Jf = jbar(xm, MU_MOON);
@@ -635,7 +641,13 @@ TEST(ZohValCrossVal, CartVsMee) {
         const Vec cart = campanella::mee2cart(Vec(xm.begin(), xm.begin() + 6), MU_MOON);
         check("CrossVal dr km " + where, norm3_diff(cart, xc, 0), 1e-5);
         check("CrossVal dv km/s " + where, norm3_diff(cart, xc, 3), 1e-10);
-        check("CrossVal dm " + where, std::abs(xm[6] - xc[6]), TOL_CROSSVAL_MASS);
+        if (std::getenv("ZOH_PRINT_ERRORS") != nullptr) {
+            std::printf("ZOHVAL CrossVal dm %s, in eps * steps (%zu steps): %.3f\n", where.c_str(), steps,
+                        std::abs(xm[6] - xc[6]) / (EPS * steps));
+        }
+        // Issue "identical", but the step sequences differ, and each step of the chain rounds: 0.05 eps per step
+        // on the worst toolchain measured (clang with FMA, 0.009 with GCC in Release).
+        check("CrossVal dm " + where, std::abs(xm[6] - xc[6]), 0.25 * EPS * steps);
     }
     const Vec Jf = jbar(xm, MU_MOON);
     const Vec s = scales(MEEM_INERTIAL, xm);

@@ -116,7 +116,8 @@ private:
 /**
  * Integration options.
  *
- * @param atol absolute error tolerance
+ * @param atol absolute error tolerance. The rvm and meem solvers require atol > 0, a deliberate restriction
+ *        (see docs/zoh_mass_dynamics.md, Numerical guidance); rv and mee accept 0
  * @param rtol relative error tolerance
  * @param t_eval output times, in TU, strictly monotonic in the direction of integration and
  *        within tspan; empty means every accepted step (including tspan[0] and tspan[1])
@@ -124,9 +125,10 @@ private:
  *        ignored by rv and mee): reaching it with time left throws std::runtime_error, because a
  *        step size collapsing onto a singularity (p -> 0 under thrust) may never fail by itself.
  *        Counted over the whole of tspan, with or without t_eval; per segment in propagate_zoh_*.
- *        0 disables the limit, and a negative value throws std::invalid_argument. A stall at about 30000
- *        steps/s ends in about a minute with the default, after recording 1.4 GB with sensitivities if
- *        t_eval is empty. At default tolerances, low-thrust arcs from low Earth and lunar orbit took up to
+ *        0 disables the limit, and a negative value throws std::invalid_argument. It bounds steps, not time:
+ *        with the default a stall ends in about a minute with third bodies and SRP, but takes much longer
+ *        with high-degree spherical harmonics, up to hours at degree 200 (docs/zoh_mass_dynamics.md). It
+ *        records 1.4 GB with sensitivities if t_eval is empty. At default tolerances, low-thrust arcs from low Earth and lunar orbit took up to
  *        1.4e6 steps over 3 years, and with sensitivities 5.9e5 over 1 year; canonical units took fewer.
  * @param poll called between steps of the rvm and meem solvers, every 1024 steps and before the
  *        first, unless empty; may throw to stop the integration, outside any GSL call.
@@ -349,10 +351,12 @@ private:
  * @param options tolerances and output times
  * @throws as solve_ivp_rv; also std::invalid_argument as ControlledParameters, and if x0 is not
  *         finite; std::domain_error if m0 is not > 0, including over a zero-length tspan, or if the
- *         closed form m0 - c2 Gamma (t - t0) is not > 0 at the last output time (tf, or the last of
- *         t_eval), before integrating and whatever the thrust; the message has the depletion time;
+ *         closed form m0 - c2 Gamma (t - t0) is not above 64 eps max(m0, |c2 Gamma (t - t0)|), so that the
+ *         depletion time itself is refused, at the last output time (tf, or the last of t_eval), before
+ *         integrating and whatever the thrust; the message has the depletion time. The factor is a
+ *         heuristic: results within about 1e-12 of depletion are not meaningful, and may be returned;
  *         std::runtime_error if options.max_steps is reached, with the time reached;
- *         std::invalid_argument if options.max_steps < 0
+ *         std::invalid_argument if options.max_steps < 0 or options.atol is not > 0
  */
 IvpResult solve_ivp_rvm(const SpiceParameters& params, const ThrustOptions& thrust,
                         const std::vector<double>& tspan, const std::vector<double>& x0,
@@ -385,8 +389,9 @@ IvpResult solve_ivpstm_meem(const SpiceParameters& params, const ThrustOptions& 
  * only. x and dxdt must not overlap. eom_* take 7 states; eomstm_* take 84: the state, then Phi (7x7)
  * and Psi (7x4), both row-major, with Phi_dot = A Phi and Psi_dot = A Psi + B.
  *
- * @return as eom_rv. A mass m that is not > 0 or not finite is out of the domain (GSL_EDOM). eom_error
- *         on cp.params() describes the last failure.
+ * @return as eom_rv. A mass m that is not > 0 or not finite is out of the domain (GSL_EDOM). So is a
+ *         non-finite derivative of Phi or Psi in eomstm_*, unlike eomstm_rv and eomstm_mee, which only
+ *         check the state derivative and A. eom_error on cp.params() describes the last failure.
  */
 int eom_rvm(double t, const double x[], double dxdt[], void* params);
 int eom_meem(double t, const double x[], double dxdt[], void* params);
@@ -417,10 +422,13 @@ EomEvalControl eval_meem(const SpiceParameters& params, const ThrustOptions& thr
  * @param times segment boundaries, in TU (N), strictly monotonic
  * @param x_ref reference states, N x 7 row-major
  * @param u_ref controls, (N - 1) x 4 row-major
- * @param options tolerances and max_steps, per segment; t_eval must be empty
- * @throws as solve_ivpstm_rvm, keeping the type, with "<function>: segment k of n (t = [a, b] TU): " in
- *         front of the message of a failed segment; std::invalid_argument on inconsistent sizes,
- *         non-finite or non-monotonic input, or a non-empty t_eval
+ * @param options tolerances and max_steps, per segment; t_eval must be empty. Only the end of each
+ *        segment is recorded, so memory does not grow with the steps
+ * @throws as solve_ivpstm_rvm, as std::domain_error, std::invalid_argument or std::runtime_error, with
+ *         "<function>: segment k of n (t = [a, b] TU): " in front of the message of a failed segment; a class
+ *         derived from these, which only options.poll can throw, is rethrown as its base type. Any other
+ *         exception from options.poll passes through unchanged and without the segment.
+ *         std::invalid_argument on inconsistent sizes, non-finite or non-monotonic input, or a non-empty t_eval
  */
 ZohLinearization propagate_zoh_rvm(const SpiceParameters& params, const ThrustOptions& thrust,
                                    const std::vector<double>& times, const std::vector<double>& x_ref,

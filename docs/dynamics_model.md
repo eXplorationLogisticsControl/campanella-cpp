@@ -23,7 +23,7 @@ $$
 $$
 
 where $\mu_i$ is the gravitational parameter of $B_i$. The perturbations are added in this order by
-`add_perturbations` (`src/eoms/forces.cpp:73-144`): third bodies, then solar radiation pressure (if
+`add_perturbations` (`src/eoms/forces.cpp:85-158`): third bodies, then solar radiation pressure (if
 `include_srp`), then central-body spherical harmonics (if `sh_file` is given). None of the
 accelerations depends on $\boldsymbol{v}$.
 
@@ -57,7 +57,7 @@ Earth's axis precesses, the J2000 equator differs from the true equator of date 
 
 **Body positions.** The position $\boldsymbol{s}_i$ of each third body relative to the central body
 is queried at every right-hand-side evaluation with `spkgps_c(code_i, et, naif_frame, code_0)`
-(`src/eoms/forces.cpp:84`). These are *geometric* positions: where the bodies are at the instant
+(`src/eoms/forces.cpp:96`). These are *geometric* positions: where the bodies are at the instant
 `et`. SPICE can instead return *apparent* positions, corrected for light time (where the body was
 when the light now arriving left it) and stellar aberration (the apparent shift due to the
 observer's velocity); these are what an observer sees, and they are the wrong input for a force
@@ -88,7 +88,7 @@ $$
 \mathrm{et} = \mathrm{et}_0 + t \cdot \mathrm{TU}
 $$
 
-(`src/eoms/forces.cpp:78`). In km/s units TU = 1 s. `tspan`, `t_eval` and the output times `res.t`
+(`src/eoms/forces.cpp:90`). In km/s units TU = 1 s. `tspan`, `t_eval` and the output times `res.t`
 are all values of $t$. Converting a calendar date in UTC to ET requires a leapseconds kernel; see the
 [tutorial](tutorial.md#4-time-et-and-tdb).
 
@@ -157,7 +157,7 @@ precision has a relative error of $5\times10^{-12}$ against a 40-digit reference
 $2\times10^{-16}$.
 
 $\mu_i$ is `params.mus[i]` and $\boldsymbol{s}_i$ is the SPICE position divided by DU
-(`src/eoms/forces.cpp:88-92`). The gradient (`gravity_gradient_third_body`,
+(`src/eoms/forces.cpp:100-104`). The gradient (`gravity_gradient_third_body`,
 `src/eoms/gravity_gradient.cpp:50-78`) is that of the direct term alone:
 
 $$
@@ -173,7 +173,7 @@ Sun's gravity.
 ## Solar radiation pressure
 
 `include_srp=True` adds a cannonball-type solar radiation pressure acceleration
-(`src/eoms/forces.cpp:101-122`, `src/perturbations/SRP.cpp`). With
+(`src/eoms/forces.cpp:113-136`, `src/perturbations/SRP.cpp`). With
 
 $$
 \boldsymbol{d} = \boldsymbol{r} - \boldsymbol{s}_\odot, \qquad R = \|\boldsymbol{d}\|,
@@ -251,7 +251,7 @@ that of a repulsive inverse-square field.
 ## Central-body spherical harmonics
 
 With `sh_file`, the acceleration of degrees 2 to `sh_nmax` of the central body's gravity field is
-added (`src/eoms/forces.cpp:124-142`). It is evaluated in `sh_frame` with the fully normalized
+added (`src/eoms/forces.cpp:138-156`). It is evaluated in `sh_frame` with the fully normalized
 V, W recursion of Cunningham {cite:p}`cunningham1970,montenbruck2000` and rotated to `naif_frame` as
 described [above](#reference-frames). The series uses the GM and reference radius of the coefficient
 file, scaled as $\mu_\text{SH} = \mathrm{GM}_\text{file}\,\mathrm{TU}^2/\mathrm{DU}^3$ and
@@ -278,7 +278,7 @@ of motion is then in DU, TU and DU/TU:
 | quantity | scaling |
 |---|---|
 | state, `tspan`, `t_eval`, outputs | DU, DU/TU, TU |
-| third-body positions | SPICE km divided by DU (`src/eoms/forces.cpp:88-90`) |
+| third-body positions | SPICE km divided by DU (`src/eoms/forces.cpp:100-102`) |
 | ephemeris time | $\mathrm{et}_0 + t\,\mathrm{TU}$ |
 | SRP | $K$ in DU³/TU² (see above); `srp_A` and `srp_m` stay in m² and kg (`rvm` and `meem` use $\bar m\, m$ in kg instead of `srp_m`) |
 | spherical harmonics | $\mu_\text{SH}$, $R_\text{SH}$ (see above) |
@@ -319,7 +319,7 @@ the top three rows of $\dot\Phi$ are the bottom three rows of $\Phi$, and the bo
 $G\,\Phi_{0:3,\,:}$.
 
 The solvers integrate 42 variables: the state followed by $\Phi$ in row-major order, starting from
-the identity (`src/integrate.cpp:102-112`). GSL's step-size control applies the same `atol` and `rtol`
+the identity (`src/integrate.cpp:112-122`). GSL's step-size control applies the same `atol` and `rtol`
 to all 42 components, so the STM also constrains the step size. The sensitivity solvers of the
 [mass-augmented dynamics](zoh_mass_dynamics.md#sensitivities) integrate 84 components in the same way.
 
@@ -337,7 +337,7 @@ embedded Runge–Kutta Prince–Dormand (8, 9) method {cite:p}`galassi2009`. It 
 {cite:t}`prince1981`: the solution is advanced with the 8th-order formula, and the local error is
 estimated from the difference to an embedded 7th-order formula (an 8(7) pair; `rk8pd.c` in the GSL
 sources). It is used with the standard step-size control
-`gsl_odeiv2_control_y_new(atol, rtol)` (`src/integrate.cpp:117-118`). With the desired error level
+`gsl_odeiv2_control_y_new(atol, rtol)` (`src/integrate.cpp:127-128`). With the desired error level
 
 $$
 D_i = \epsilon_\text{abs} + \epsilon_\text{rel}\,|y_i| ,
@@ -347,10 +347,10 @@ GSL rejects a step and retries with a smaller one when the local error estimate 
 exceeds $D_i$ by more than 10%, and lengthens the next step when all errors are well below $D_i$
 {cite:p}`galassi2009`.
 
-The first trial step is 1 TU in the direction of integration (`src/integrate.cpp:152`), and GSL
+The first trial step is 1 TU in the direction of integration (`src/integrate.cpp:168`), and GSL
 adapts it from there. The defaults are `atol = 1e-12` and `rtol = 1e-14`. Outputs at `t_eval` are
 obtained by stepping exactly onto each requested time, not by interpolation
-(`src/integrate.cpp:170-196`).
+(`src/integrate.cpp:186-212`).
 
 A right-hand-side evaluation that fails is handled in one of two ways
 (`src/model.h`, `src/eoms/forces.cpp:19-24`):

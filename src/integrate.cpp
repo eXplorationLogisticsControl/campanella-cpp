@@ -2,7 +2,9 @@
  * Integration of the equations of motion with GSL's rk8pd stepper
  */
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <new>
 #include <sstream>
@@ -22,6 +24,9 @@ namespace {
 struct StepFree { void operator()(gsl_odeiv2_step* p) const { gsl_odeiv2_step_free(p); } };
 struct ControlFree { void operator()(gsl_odeiv2_control* p) const { gsl_odeiv2_control_free(p); } };
 struct EvolveFree { void operator()(gsl_odeiv2_evolve* p) const { gsl_odeiv2_evolve_free(p); } };
+
+// The mass must stay above this many machine epsilons of max(m0, |mass change|) at the last output time
+constexpr double DEPLETION_MARGIN_EPS = 64.0;
 
 // GSL's default error handler aborts the process; report through return codes instead
 struct GslErrorHandlerOff {
@@ -93,6 +98,11 @@ IvpResult integrate(Rhs rhs, const Model& model, std::size_t nx, std::size_t nu,
     if (zoh != nullptr && options.max_steps < 0) {
         invalid(who, "max_steps must be >= 0 (0 disables the limit)");
     }
+    // A deliberate restriction: in meem, exact-zero elements with sensitivities and thrust collapsed the steps
+    // until max_steps at atol = 0. rv and mee accept it, so that their behaviour does not change.
+    if (zoh != nullptr && !(options.atol > 0.0)) {
+        invalid(who, "atol must be > 0 for the rvm and meem solvers");
+    }
     const size_t dim = with_stm ? nx*(1 + nx + nu) : nx;
     const double t0 = tspan[0];
     const double tf = tspan[1];
@@ -128,7 +138,13 @@ IvpResult integrate(Rhs rhs, const Model& model, std::size_t nx, std::size_t nu,
         const double m0 = x0[nx - 1];
         const double mdot = -zoh->c2*zoh->u[3];
         const double t_last = every_step ? tf : options.t_eval.back();
-        if (!(m0 > 0.0) || !(m0 + mdot*(t_last - t0) > 0.0)) {
+        // A heuristic, to refuse the depletion time itself. The error of the integrated mass grows with the
+        // steps and |t|, so results within about 1e-12 of depletion are not meaningful: outside the margin,
+        // the solver can still return an inaccurate result, or GSL can fail.
+        const double dm = mdot*(t_last - t0);
+        const double m_floor = DEPLETION_MARGIN_EPS*std::numeric_limits<double>::epsilon()
+                               *std::max(m0, std::abs(dm));
+        if (!(m0 > 0.0) || !(m0 + dm > m_floor)) {
             ws.fault = Fault::mass_domain;
             throw_fault(model, ws, RHS_EDOM, (m0 > 0.0) ? t0 - m0/mdot : t0, who);
         }

@@ -325,6 +325,20 @@ def test_depletion_is_about_the_last_output_time(two_body):
 
 
 @pytest.mark.parametrize("d", DYNS, ids=IDS)
+def test_backward_mass_follows_the_sign_of_the_span(two_body, d):
+    # Gamma > 0 backward gains mass, past any |t_empty|; Gamma < 0 backward is what runs out
+    th = thruster(d.thrust.mee_control_frame, thrust_N=1000.0)
+    t_empty = 1.0 / (1000.0 / (ISP * G0) / MASS_UNIT)    # m0 = 1, |Gamma| = 1
+    for solve in (d.solve, d.solvestm):
+        r = solve(two_body, th, [0.0, -1.5 * t_empty], d.x0, [0.0, 0.0, 0.0, 1.0])
+        assert r.t[-1] == -1.5 * t_empty
+        assert r.x[-1, 6] == pytest.approx(2.5, rel=1e-12)
+        with pytest.raises(ValueError, match="mass out of domain") as e:
+            solve(two_body, th, [0.0, -2 * t_empty], d.x0, [0.3, -0.5, 0.4, -1.0])
+        assert f"{-t_empty:.10g}"[:8] in str(e.value)
+
+
+@pytest.mark.parametrize("d", DYNS, ids=IDS)
 def test_negative_gamma_and_big_tau_are_not_rejected(two_body, d):
     r = d.solve(two_body, d.thrust, [0.0, DAY], d.x0, [1.0, 0.0, 0.0, -0.1])
     assert r.x[-1, 6] == pytest.approx(1.0 + 0.1 * C2 * DAY, rel=1e-13)
@@ -905,3 +919,60 @@ def test_propagate_errors(two_body, d):
     last = x.copy()
     last[2, 6] = -1.0
     assert call(t, last, u).defects[1, 6] < 0.0
+
+
+@pytest.mark.parametrize("d", DYNS, ids=IDS)
+def test_propagate_rejects_what_is_not_real(two_body, d):
+    t = [0.0, 100.0, 200.0]
+    x = np.array([d.x0, d.x0, d.x0])
+    u = np.array([U, U])
+    for bad in (x + 5j, x.astype(complex), x.astype(str), x.astype(bool), x.astype(object), None, "abc", [[1.0], [1.0, 2.0]]):
+        with pytest.raises(TypeError, match="x_ref must be an array of integers or floats"):
+            d.propagate(two_body, d.thrust, t, bad, u)
+    for bad in (u + 5j, u.astype(str), u.astype(bool), u.astype(object), None):
+        with pytest.raises(TypeError, match="u_ref must be an array of integers or floats"):
+            d.propagate(two_body, d.thrust, t, x, bad)
+    # as x0 of the solvers, for a list of Python complex numbers
+    with pytest.raises(TypeError):
+        d.solve(two_body, d.thrust, [0.0, 1.0], [complex(v) for v in d.x0], U)
+    # integers and floats of any width are fine
+    z = d.propagate(two_body, d.thrust, t, x, u)
+    y = d.propagate(two_body, d.thrust, t, x, u.astype(np.longdouble))
+    assert np.array_equal(z.Phi, y.Phi)
+    assert np.array_equal(d.propagate(two_body, d.thrust, t, x, (u * 0).astype(np.int32)).x_end,
+                          d.propagate(two_body, d.thrust, t, x, u * 0).x_end)
+    assert len(d.propagate(two_body, d.thrust, t, x.astype(np.float32), (u * 0).astype(np.uint8))) == 2
+
+
+@pytest.mark.parametrize("d", DYNS, ids=IDS)
+def test_atol_must_be_positive(two_body, d):
+    with pytest.raises(ValueError, match="atol must be > 0"):
+        d.solve(two_body, d.thrust, [0.0, 600.0], d.x0, U, atol=0.0, rtol=1e-10)
+    with pytest.raises(ValueError, match="atol must be > 0"):
+        d.propagate(two_body, d.thrust, [0.0, 600.0], [d.x0, d.x0], [U], atol=0.0, rtol=1e-10)
+    assert d.solve(two_body, d.thrust, [0.0, 600.0], d.x0, U, atol=1e-10, rtol=0.0).t[-1] == 600.0
+
+
+@pytest.mark.parametrize("d", DYNS, ids=IDS)
+def test_eomstm_rejects_non_finite_sensitivities(two_body, d):
+    y = np.zeros(84)
+    y[:7] = d.x0
+    y[7:56] = np.eye(7).ravel()
+    assert np.all(np.isfinite(d.eomstm(two_body, d.thrust, 0.0, y, U)))
+    for i in (7, 55, 56, 83):
+        for bad in (math.nan, math.inf):
+            y_bad = y.copy()
+            y_bad[i] = bad
+            with pytest.raises(ValueError, match="non-finite"):
+                d.eomstm(two_body, d.thrust, 0.0, y_bad, U)
+
+
+@pytest.mark.parametrize("d", DYNS, ids=IDS)
+def test_depletion_time_itself_is_refused(two_body, d):
+    th = thruster(d.thrust.mee_control_frame, thrust_N=1000.0)
+    t_star = 1.0 / (1000.0 / (ISP * G0) / MASS_UNIT)
+    for u in ([0.0, 0.0, 0.0, 1.0], [0.6, 0.0, 0.8, 1.0]):
+        for solve in (d.solve, d.solvestm):
+            with pytest.raises(ValueError, match="mass out of domain"):
+                solve(two_body, th, [0.0, t_star], d.x0, u)
+

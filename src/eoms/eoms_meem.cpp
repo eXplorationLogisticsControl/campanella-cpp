@@ -148,7 +148,8 @@ int rhsstm_meem(double t, const double x[], double xdot[], void* params) {
         return status;
     }
     augment_rhs(A, B, x, xdot);
-    return RHS_SUCCESS;
+    // a non-finite Phi or Psi on input, which the evaluator does not see
+    return check_finite(*ctx->ws, xdot + 7, 77);
 }
 
 }  // namespace detail

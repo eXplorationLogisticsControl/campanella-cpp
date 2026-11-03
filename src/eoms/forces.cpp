@@ -37,6 +37,18 @@ void add33(double G[3][3], const double B[3][3]) {
     }
 }
 
+// Out of line on purpose: see the SRP block of add_perturbations
+#if defined(_MSC_VER)
+__declspec(noinline)
+#else
+__attribute__((noinline))
+#endif
+void scale3(double k, const double v[3], double out[3]) {
+    for (int j = 0; j < 3; j++) {
+        out[j] = k*v[j];
+    }
+}
+
 }  // namespace
 
 int check_finite(Workspace& ws, const double* v, int n) {
@@ -107,12 +119,14 @@ int add_perturbations(const Model& model, Workspace& ws, double t, const double 
         const double d[3] = {r[0] - s[0], r[1] - s[1], r[2] - s[2]};
         const double R = std::sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
         const double kappa = srp_k / (R*R*R);
-        const double a_s[3] = {kappa*d[0], kappa*d[1], kappa*d[2]};
-        add3(a, a_s);
+        // a_s has to stay single-use. A second use, or a repeated product the compiler can merge, stops
+        // it fusing a[j] + kappa*d[j] under FMA contraction, and changes the results of rv and mee.
+        {
+            const double a_s[3] = {kappa*d[0], kappa*d[1], kappa*d[2]};
+            add3(a, a_s);
+        }
         if (a_srp) {
-            for (int j = 0; j < 3; j++) {
-                a_srp[j] = a_s[j];
-            }
+            scale3(kappa, d, a_srp);
         }
         if (G) {
             double G_srp[3][3];

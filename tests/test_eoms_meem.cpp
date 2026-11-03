@@ -800,3 +800,91 @@ TEST(Meem, ExistingShDomainFaultKept) {
     EXPECT_EQ(meem_evaluate(Access::model(p), control, Access::workspace(p), 0.0, x, xdot, nullptr, nullptr), RHS_EDOM);
     EXPECT_EQ(Access::workspace(p).fault, Fault::sh_domain);
 }
+
+// ---- SRP around the Sun, in closed form --------------------------------------------------------------
+
+namespace {
+
+// The Sun at the center: SRP is radial and outward, with magnitude K / r^2, so that (the Keplerian orbit
+// leaves f and g constant) fdot = sqrt(p/mu) sin(L) K / r^2 and gdot = -sqrt(p/mu) cos(L) K / r^2, r = p / w
+constexpr double GM_SUN = 1.3271244004127942e11;
+constexpr double AU_KM = 149597870.7;
+
+struct HelioSrp {
+    double K;                  // km^3/s^2
+    std::vector<double> x;     // state, with mass
+    double fdot, gdot;
+    double dfdot[6], dgdot[6];  // gradients with respect to [p, f, g, h, k, L]
+};
+
+HelioSrp helio_srp(const SpiceOptions& o, double m) {
+    const double p = 1.5e8, f = 0.1, g = -0.05, L = 0.7;
+    const double Cr = 1 + o.srp_rhoS + 5 * o.srp_rhoD / 3;
+    const double K = 1367.0 / 299792458.0 * Cr * o.srp_A / (MBAR * m) / 1e3 * AU_KM * AU_KM;
+    const double w = 1 + f * std::cos(L) + g * std::sin(L);
+    const double dw_dL = -f * std::sin(L) + g * std::cos(L);
+    const double c = K / std::sqrt(GM_SUN) * w * w * std::pow(p, -1.5);
+    HelioSrp s{K, {p, f, g, 0.02, -0.01, L, m}, c * std::sin(L), -c * std::cos(L), {}, {}};
+    s.dfdot[0] = -1.5 * s.fdot / p;
+    s.dgdot[0] = -1.5 * s.gdot / p;
+    s.dfdot[1] = 2 * s.fdot * std::cos(L) / w;
+    s.dgdot[1] = 2 * s.gdot * std::cos(L) / w;
+    s.dfdot[2] = 2 * s.fdot * std::sin(L) / w;
+    s.dgdot[2] = 2 * s.gdot * std::sin(L) / w;
+    s.dfdot[5] = c * (std::cos(L) + 2 * std::sin(L) * dw_dL / w);
+    s.dgdot[5] = c * (std::sin(L) - 2 * std::cos(L) * dw_dL / w);
+    return s;
+}
+
+// srp_m is far from any m_bar m here, so that a path that fell back on it would show
+SpiceParameters helio_srp_params() {
+    SpiceOptions o = with_gms({GM_SUN});
+    add_srp(o);
+    o.srp_m = 111.0;
+    return SpiceParameters(ET0, {"SUN"}, o);
+}
+
+}  // namespace
+
+TEST(MeemHelio, SrpWithTheSunAtTheCenter) {
+    const SpiceParameters p = helio_srp_params();
+    for (const ThrustFrame frame : FRAMES) {
+        const ThrustOptions th = thrust_options(frame);
+        for (const double m : {1.0, 2.0, 0.37}) {
+            const HelioSrp s = helio_srp(p.options(), m);
+            const EomEvalControl e = campanella::eval_meem(p, th, 0.0, s.x, U_ZERO);
+            ASSERT_NE(s.fdot, 0.0);
+            report("Sun-centered SRP: f", std::abs(e.xdot[1] / s.fdot - 1));
+            EXPECT_NEAR(e.xdot[1], s.fdot, 1e-13 * std::abs(s.fdot)) << "m = " << m;
+            EXPECT_NEAR(e.xdot[2], s.gdot, 1e-13 * std::abs(s.gdot)) << "m = " << m;
+            // the mass column is -xdot_srp / m
+            EXPECT_NEAR(e.A[7 * 1 + 6], -s.fdot / m, 1e-13 * std::abs(s.fdot / m)) << "m = " << m;
+            EXPECT_NEAR(e.A[7 * 2 + 6], -s.gdot / m, 1e-13 * std::abs(s.gdot / m)) << "m = " << m;
+            // radial: no change of p, h or k
+            EXPECT_LE(std::abs(e.xdot[0]) / s.x[0], 1e-13 * std::abs(s.fdot));
+            EXPECT_LE(std::abs(e.xdot[3]), 1e-13 * std::abs(s.fdot));
+            EXPECT_LE(std::abs(e.xdot[4]), 1e-13 * std::abs(s.fdot));
+        }
+    }
+}
+
+TEST(MeemHelio, SrpGradientScalesWithStateMass) {
+    // The rows of f and g in A are SRP alone, gradient included: no cancellation against gravity
+    const SpiceParameters p = helio_srp_params();
+    for (const ThrustFrame frame : FRAMES) {
+        const ThrustOptions th = thrust_options(frame);
+        for (const double m : {1.0, 2.0, 0.37}) {
+            const HelioSrp s = helio_srp(p.options(), m);
+            const EomEvalControl e = campanella::eval_meem(p, th, 0.0, s.x, U_ZERO);
+            for (const int j : {0, 1, 2, 5}) {
+                // by column: that of p is smaller than the others by a factor of p
+                const double scale = std::max(std::abs(s.dfdot[j]), std::abs(s.dgdot[j]));
+                const double df = std::abs(e.A[7 * 1 + j] - s.dfdot[j]) / scale;
+                const double dg = std::abs(e.A[7 * 2 + j] - s.dgdot[j]) / scale;
+                report("Sun-centered SRP gradient", std::max(df, dg));
+                EXPECT_LE(df, 1e-12) << "m = " << m << ", column " << j;
+                EXPECT_LE(dg, 1e-12) << "m = " << m << ", column " << j;
+            }
+        }
+    }
+}

@@ -60,7 +60,9 @@ void validate(const std::vector<double>& times, const std::vector<double>& x_ref
     check_finite(u_ref, NU, "u_ref", who);
 }
 
-// Solve one segment. A failure keeps its type, with the segment added to its message.
+// Solve one segment. A domain_error, invalid_argument or runtime_error is rethrown as that base type, with
+// the segment added to its message, so a class derived from them is not kept. Anything else (another
+// exception thrown by options.poll) passes through unchanged, without the segment.
 IvpResult solve_segment(Solver solve, const SpiceParameters& params, const ThrustOptions& thrust,
                         const std::vector<double>& times, const std::vector<double>& x_ref,
                         const std::vector<double>& u_ref, const IvpOptions& options, std::size_t k,
@@ -75,7 +77,10 @@ IvpResult solve_segment(Solver solve, const SpiceParameters& params, const Thrus
     try {
         const std::vector<double> x0(x_ref.begin() + NX*k, x_ref.begin() + NX*(k + 1));
         const std::vector<double> u(u_ref.begin() + NU*k, u_ref.begin() + NU*(k + 1));
-        return solve(params, thrust, {times[k], times[k + 1]}, x0, u, options);
+        // only the end of the segment is used, so the steps are not recorded
+        IvpOptions end_only = options;
+        end_only.t_eval = {times[k + 1]};
+        return solve(params, thrust, {times[k], times[k + 1]}, x0, u, end_only);
     } catch (const std::domain_error& e) {
         throw std::domain_error(where(e));
     } catch (const std::invalid_argument& e) {
