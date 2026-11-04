@@ -54,6 +54,65 @@ def row_normalised_error(M, M_ref):
     return np.max(np.abs(M - M_ref).max(axis=1) / np.abs(M_ref).max(axis=1))
 
 
+def final_state_n(res, n):
+    """Final row of res.x, for n states"""
+    return np.array(res.x).reshape(-1, n)[-1]
+
+
+def final_stm_n(res, n):
+    """Final Phi of res.stm, n x n"""
+    return np.array(res.stm).reshape(-1, n, n)[-1]
+
+
+def final_stm_u(res, nx, nu):
+    """Final Psi of res.stm_u, nx x nu"""
+    return np.array(res.stm_u).reshape(-1, nx, nu)[-1]
+
+
+def jacobian_fd_n(f, x, h):
+    """Central differences of f: R^n -> R^m with steps h (n), as an m x n matrix"""
+    x = np.asarray(x, dtype=float)
+    cols = []
+    for j in range(x.size):
+        xp, xm = x.copy(), x.copy()
+        xp[j] += h[j]
+        xm[j] -= h[j]
+        cols.append((np.asarray(f(xp)) - np.asarray(f(xm))) / (xp[j] - xm[j]))
+    return np.stack(cols, axis=1)
+
+
+def matrix_error(M, R, rows, cols, row_scale=None, col_scale=None, abs_floor=0.0, mode="row"):
+    """Normalised error of the rows x cols matrix M against the reference R, after scaling both as
+    diag(1/row_scale) M diag(col_scale). None means ones.
+
+    mode "row": max over rows of max_j |dM_ij| / max_j |R_ij|; mode "col": the same over columns.
+    A row (column) whose scaled reference is at most abs_floor has nothing to normalise by, and is
+    checked absolutely: it contributes 0 if its scaled difference is at most abs_floor, inf otherwise.
+    Returns inf if any value is not finite, or if a size is inconsistent."""
+    if mode not in ("row", "col"):
+        raise ValueError(f"unknown mode {mode}")
+    M, R = np.asarray(M, dtype=float), np.asarray(R, dtype=float)
+    rs = np.ones(rows) if row_scale is None else np.asarray(row_scale, dtype=float)
+    cs = np.ones(cols) if col_scale is None else np.asarray(col_scale, dtype=float)
+    if M.size != rows * cols or R.size != rows * cols or rs.size != rows or cs.size != cols:
+        return np.inf
+    scale = np.outer(1.0 / rs, cs)
+    M, R = M.reshape(rows, cols) * scale, R.reshape(rows, cols) * scale
+    if not (np.all(np.isfinite(M)) and np.all(np.isfinite(R))):
+        return np.inf
+    axis = 1 if mode == "row" else 0
+    diff, ref = np.abs(M - R).max(axis=axis), np.abs(R).max(axis=axis)
+    zero = ref <= abs_floor
+    if np.any(diff[zero] > abs_floor):
+        return np.inf
+    return float(np.max(diff[~zero] / ref[~zero], initial=0.0))
+
+
+def solve_linear(A, B):
+    """Solve A X = B with partial pivoting (LAPACK); B may be a vector or a matrix"""
+    return np.linalg.solve(A, B)
+
+
 def assert_state_close(x, x_ref, rtol):
     """Position and velocity errors relative to |r| and |v| of x_ref. Per-component tolerances are
     too tight for small components: rounding differences between platforms (FMA contraction on

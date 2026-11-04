@@ -75,3 +75,5 @@ dev_files/
 # python cache
 __pycache__/
 .ipynb_checkpoints/
+# sphinx build output
+docs/_build/

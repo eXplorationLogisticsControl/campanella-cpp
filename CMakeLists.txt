@@ -256,9 +256,12 @@ add_library(campanella_core OBJECT
     src/spice_parameters.cpp
     src/integrate.cpp
     src/solve_ivp.cpp
+    src/propagate_zoh.cpp
     src/eoms/forces.cpp
     src/eoms/eoms_rv.cpp
     src/eoms/eoms_mee.cpp
+    src/eoms/eoms_rvm.cpp
+    src/eoms/eoms_meem.cpp
     src/eoms/mee.cpp
     src/eoms/gravity_gradient.cpp
     src/perturbations/thirdbody.cpp
@@ -295,7 +298,7 @@ if(CAMPANELLA_BUILD_CPP)
             LINK_FLAGS " -Wl,-z,notext -Wl,--exclude-libs,ALL")
     endif()
 
-    foreach(example solve_twobody solve_rv solve_mee solve_moon_canonical solve_sh)
+    foreach(example solve_twobody solve_rv solve_mee solve_moon_canonical solve_sh solve_zoh)
         add_executable(${example} examples/${example}.cpp)
         target_link_libraries(${example} PRIVATE campanella)
         set_target_properties(${example} PROPERTIES
@@ -342,6 +345,11 @@ if(CAMPANELLA_BUILD_TESTS)
         tests/test_spice_parameters.cpp
         tests/test_eoms.cpp
         tests/test_solve_ivp.cpp
+        tests/test_eoms_rvm.cpp
+        tests/test_eoms_meem.cpp
+        tests/test_solve_zoh.cpp
+        tests/test_zoh_validation.cpp
+        tests/test_propagate_zoh.cpp
         $<TARGET_OBJECTS:campanella_core>)
     add_dependencies(campanella_tests gsl_external_build)
     target_include_directories(campanella_tests PRIVATE

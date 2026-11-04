@@ -17,12 +17,14 @@ namespace detail {
  * @param ws scratch space
  * @param t time, in TU
  * @param x state [x, y, z, vx, vy, vz], in DU, DU/TU
+ * @param srp_k SRP coefficient, in DU^3/TU^2; ignored if SRP is off
  * @param xdot time derivative of x, to be computed
  * @param A 6-by-6 Jacobian d(xdot)/dx to be computed, or nullptr to skip it
+ * @param a_srp SRP acceleration alone, zero if SRP is off; nullptr to skip it
  * @return as add_perturbations; also RHS_EDOM (ws.fault = nonfinite) if xdot or A is not finite
  */
-int rv_evaluate(const Model& model, Workspace& ws, double t, const double x[6],
-                double xdot[6], double A[6][6]) {
+int rv_evaluate_ext(const Model& model, Workspace& ws, double t, const double x[6], double srp_k,
+                    double xdot[6], double A[6][6], double a_srp[3]) {
     ws.fault = Fault::none;
     const double r[3] = {x[0], x[1], x[2]};
     const double d = std::sqrt((r[0]*r[0]) + (r[1]*r[1]) + (r[2]*r[2]));
@@ -35,7 +37,7 @@ int rv_evaluate(const Model& model, Workspace& ws, double t, const double x[6],
     if (A) {
         gravity_gradient_center(r, mu, G);
     }
-    int status = add_perturbations(model, ws, t, r, a, A ? G : nullptr);
+    int status = add_perturbations(model, ws, t, r, srp_k, a, A ? G : nullptr, a_srp);
     if (status != RHS_SUCCESS) {
         return status;
     }
@@ -65,6 +67,12 @@ int rv_evaluate(const Model& model, Workspace& ws, double t, const double x[6],
         return check_finite(ws, &A[0][0], 36);
     }
     return RHS_SUCCESS;
+}
+
+
+int rv_evaluate(const Model& model, Workspace& ws, double t, const double x[6],
+                double xdot[6], double A[6][6]) {
+    return rv_evaluate_ext(model, ws, t, x, model.srp_k, xdot, A, nullptr);
 }
 
 

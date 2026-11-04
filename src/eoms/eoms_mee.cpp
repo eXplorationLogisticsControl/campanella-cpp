@@ -31,12 +31,13 @@ double dot3(const double a[3], const double b[3]) {
  * @param x MEE state [p, f, g, h, k, L]
  * @param xdot time derivative of x, to be computed
  * @param A 6-by-6 Jacobian d(xdot)/dx to be computed, or nullptr to skip it
+ * @param extra additional accelerations and outputs (see MeeExtra), or nullptr
  * @return RHS_SUCCESS; RHS_EDOM if p <= 0 or w <= 0, below sh_rho_min * R, or if xdot or A is not finite;
  *         RHS_EBADFUNC on SPICE error. RHS_EDOM is recoverable: gsl_odeiv2_evolve_apply halves
  *         the step and retries, whereas RHS_EBADFUNC aborts the integration.
  */
-int mee_evaluate(const Model& model, Workspace& ws, double t, const double x[6],
-                 double xdot[6], double A[6][6]) {
+int mee_evaluate_ext(const Model& model, Workspace& ws, double t, const double x[6],
+                     double xdot[6], double A[6][6], const MeeExtra* extra) {
     ws.fault = Fault::none;
     const double mu = model.mus[0];
     const bool compute_jacobian = (A != nullptr);
@@ -70,15 +71,30 @@ int mee_evaluate(const Model& model, Workspace& ws, double t, const double x[6],
     // 3-4. perturbing acceleration a_I and its gradient G (third bodies, SRP, SH; sec. 5.5)
     double aI[3] = {0.0, 0.0, 0.0};
     double G[3][3] = {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}};
-    int status = add_perturbations(model, ws, t, rvec, aI, compute_jacobian ? G : nullptr);
+    int status = add_perturbations(model, ws, t, rvec, extra ? extra->srp_k : model.srp_k, aI,
+                                   compute_jacobian ? G : nullptr, extra ? extra->a_srp_I : nullptr);
     if (status != RHS_SUCCESS) {
         return status;
+    }
+    if (extra && extra->a_I) {
+        for (int j = 0; j < 3; j++) {
+            aI[j] += extra->a_I[j];
+        }
     }
 
     // 5. RTN acceleration and GVE (4.1)
     const double aR = dot3(rhat, aI);
     const double aT = dot3(that, aI);
     const double aN = dot3(nhat, aI);
+
+    // total RTN acceleration: a_rtn does not rotate with the basis, so it stays out of F.
+    // A branch rather than += 0.0, which would turn -0.0 into 0.0.
+    double aR_t = aR, aT_t = aT, aN_t = aN;
+    if (extra && extra->a_rtn) {
+        aR_t += extra->a_rtn[0];
+        aT_t += extra->a_rtn[1];
+        aN_t += extra->a_rtn[2];
+    }
 
     double B[6][3] = {{0.0}};
     B[0][1] = 2*p*sig / w;
@@ -94,11 +110,26 @@ int mee_evaluate(const Model& model, Workspace& ws, double t, const double x[6],
 
     const double b5 = n0*w*w;   // Keplerian part, b = [0, 0, 0, 0, 0, n0 w^2]
     for (int i = 0; i < 6; i++) {
-        xdot[i] = B[i][0]*aR + B[i][1]*aT + B[i][2]*aN;
+        xdot[i] = B[i][0]*aR_t + B[i][1]*aT_t + B[i][2]*aN_t;
     }
     xdot[5] += b5;
     if (check_finite(ws, xdot, 6) != RHS_SUCCESS) {
         return RHS_EDOM;
+    }
+
+    if (extra && extra->B) {
+        for (int i = 0; i < 6; i++) {
+            for (int j = 0; j < 3; j++) {
+                extra->B[i][j] = B[i][j];
+            }
+        }
+    }
+    if (extra && extra->C) {
+        for (int i = 0; i < 3; i++) {
+            extra->C[i][0] = rhat[i];
+            extra->C[i][1] = that[i];
+            extra->C[i][2] = nhat[i];
+        }
     }
 
     if (!compute_jacobian) {
@@ -179,7 +210,7 @@ int mee_evaluate(const Model& model, Workspace& ws, double t, const double x[6],
     // A_B: B differentiated at fixed a_rtn
     for (int i = 0; i < 6; i++) {
         for (int m = 0; m < 6; m++) {
-            A[i][m] += dB[i][0][m]*aR + dB[i][1][m]*aT + dB[i][2][m]*aN;
+            A[i][m] += dB[i][0][m]*aR_t + dB[i][1][m]*aT_t + dB[i][2][m]*aN_t;
         }
     }
 
@@ -237,6 +268,11 @@ int mee_evaluate(const Model& model, Workspace& ws, double t, const double x[6],
     return check_finite(ws, &A[0][0], 36);
 }
 
+
+int mee_evaluate(const Model& model, Workspace& ws, double t, const double x[6],
+                 double xdot[6], double A[6][6]) {
+    return mee_evaluate_ext(model, ws, t, x, xdot, A, nullptr);
+}
 
 
 /**

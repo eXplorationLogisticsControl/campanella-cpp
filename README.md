@@ -10,13 +10,15 @@
 │   ├── basic_usage_python.md
 │   ├── build_library.md
 │   ├── gve_mee.md                    # GVE in modified equinoctial elements and their STM
-│   └── spherical_harmonics.md        # central-body gravity field (arbitrary degree/order)
+│   ├── spherical_harmonics.md        # central-body gravity field (arbitrary degree/order)
+│   └── zoh_mass_dynamics.md          # thrust and mass under zero-order-hold control, with sensitivities
 ├── examples
 │   ├── solve_mee.cpp                 # third bodies + SRP in MEE (GVE), checked against Cartesian
 │   ├── solve_moon_canonical.cpp      # Moon-centred solvers in canonical units vs km/s
 │   ├── solve_rv.cpp                  # Cartesian state and STM; needs SPICE kernels
 │   ├── solve_sh.cpp                  # low lunar orbit with a GRAIL gravity field, STM check
-│   └── solve_twobody.cpp             # two-body propagation; no kernels
+│   ├── solve_twobody.cpp             # two-body propagation; no kernels
+│   └── solve_zoh.cpp                 # low-thrust arc with zero-order-hold control, Phi and Psi check
 ├── include
 │   └── campanella.hpp                # public C++ header
 ├── notes
@@ -53,7 +55,7 @@ cmake -B build-cpp -S . -DCAMPANELLA_BUILD_PYTHON=OFF -DCAMPANELLA_BUILD_CPP=ON
 cmake --build build-cpp
 ```
 
-This writes `build-cpp/lib/libcampanella.dylib` on macOS, or `libcampanella.so` on Linux. Include `include/campanella.hpp` and link that library. GSL and CSPICE are already inside it, so do not also link CSPICE or spiceypy into the same process. The examples `solve_twobody`, `solve_rv`, `solve_mee`, `solve_moon_canonical` and `solve_sh` are built in `build-cpp/bin` and find the library through its rpath. All but `solve_twobody` load their kernels from the directory in `SPICE`. Add `-DCAMPANELLA_BUILD_TESTS=ON` to build the GoogleTest suite, and run it with `ctest` from `build-cpp` (see [docs/build_library.md](docs/build_library.md#2-tests)).
+This writes `build-cpp/lib/libcampanella.dylib` on macOS, or `libcampanella.so` on Linux. Include `include/campanella.hpp` and link that library. GSL and CSPICE are already inside it, so do not also link CSPICE or spiceypy into the same process. The examples `solve_twobody`, `solve_rv`, `solve_mee`, `solve_moon_canonical`, `solve_sh` and `solve_zoh` are built in `build-cpp/bin` and find the library through its rpath. All but `solve_twobody` load their kernels from the directory in `SPICE`. Add `-DCAMPANELLA_BUILD_TESTS=ON` to build the GoogleTest suite, and run it with `ctest` from `build-cpp` (see [docs/build_library.md](docs/build_library.md#2-tests)).
 
 ```bash
 c++ -std=c++17 my_ivp.cpp \
@@ -116,6 +118,15 @@ res = campanella.solve_ivp_rv(params, tspan, x0, atol=1e-12, rtol=1e-12)   # tol
 res.t, res.x                                      # (N,), (N, 6)
 ```
 
+Thrust and a mass state are added by `solve_ivp_rvm`, `solve_ivp_meem`, `solve_ivpstm_rvm` and `solve_ivpstm_meem`, which also return the control sensitivity, and `propagate_zoh_rvm` and `propagate_zoh_meem`, which linearize a sequence of zero-order-hold segments. The control is `u = [tau, Gamma]`, with mass flow `mdot = -c2 Gamma`. The dynamics treat `Gamma` as independent of `tau`, so the caller or optimizer enforces `Gamma = |tau|`:
+
+```python
+thrust = campanella.ThrustOptions(thrust_N=1.0, isp_s=3000.0, mass_unit_kg=1000.0)
+u = [0.6, 0.0, 0.8, 1.0]                          # tau, Gamma
+res = campanella.solve_ivpstm_rvm(params, thrust, tspan, x0 + [1.0], u)   # m0 = 1000 kg
+res.x, res.stm, res.stm_u                         # (N, 7), (N, 7, 7), (N, 7, 4)
+```
+
 The C++ interface is the same (`campanella::SpiceParameters`, `campanella::solve_ivp_rv`, ...). Code written for the former `Propagator*` classes migrates with the table in [docs/basic_usage_python.md](docs/basic_usage_python.md#migrating-from-the-propagator-classes).
 
 For further details see:
@@ -124,6 +135,7 @@ For further details see:
 - using the library via python: [docs/basic_usage_python.md](docs/basic_usage_python.md)
 - GVE in modified equinoctial elements: [docs/gve_mee.md](docs/gve_mee.md)
 - central-body spherical harmonics: [docs/spherical_harmonics.md](docs/spherical_harmonics.md)
+- thrust and mass under zero-order-hold control: [docs/zoh_mass_dynamics.md](docs/zoh_mass_dynamics.md)
 
 
 ## Common Issues
@@ -188,6 +200,11 @@ Load the kernels with `campanella.furnsh(path)`. `spiceypy.furnsh()` loads a dif
 
 ### Optimal Control Problem
 
+- [x] N-body + SRP + spherical harmonics with mass and zero-order-hold control, with STM and control sensitivity
+  - [x] Cartesian (`rvm`)
+  - [x] MEE (`meem`)
+  - [x] Per-segment linearization for multiple shooting (`propagate_zoh_*`)
+- [ ] Free final time (time-dilation control)
 - [ ] Two-body states & costates
   - [ ] Cartesian
   - [ ] MEE
